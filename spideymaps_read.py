@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 from scipy.io import loadmat
 
-from spideymaps import count_cell, prepare_fits
+from spideymaps_calculation import count_cell, prepare_fits
 
 pixel_size = 0.049
 
@@ -26,18 +26,42 @@ default_grid_params = {
     'radius': radius
 }
 
-def read_masks_file(file, format='smalllabs'):
+# def read_masks_file(file, format='smalllabs'):
+#     """
+#     """
+#     if format == 'smalllabs':
+#         masks = loadmat(file)['PhaseMask']
+        
+#     elif format == 'cellpose':
+#         masks = np.load(file, allow_pickle=True).item()['masks']
+
+#     return masks
+
+# def read_locs_file(file, format='smalllabs', pixel_size=1, column_names=['x', 'y']):
+#     """
+#     return array 2 columns: rows, columns
+#     """
+#     if format == 'smalllabs':
+#         locs_obj = h5py.File(file)
+#         locs_data, weights = prepare_fits(locs_obj, gf_only=True)
+#     elif format == 'csv':
+#         locs_df = pd.read_csv(file)
+#         locs_data = locs_df[column_names].values / pixel_size
+
+#     return locs_data
+
+def read_labels_file(file, format='smalllabs'):
     """
     """
     if format == 'smalllabs':
-        masks = loadmat(file)['PhaseMask']
+        labels = loadmat(file)['PhaseMask']
         
     elif format == 'cellpose':
-        masks = np.load(file, allow_pickle=True).item()['masks']
+        labels = np.load(file, allow_pickle=True).item()['masks']
 
-    return masks
+    return labels
 
-def read_locs_file(file, format='smalllabs', pixel_size=1, column_names=['x', 'y']):
+def read_locs_file(file, format='smalllabs', pixel_size=1, coord_cols=("x", "y")):
     """
     return array 2 columns: rows, columns
     """
@@ -46,32 +70,86 @@ def read_locs_file(file, format='smalllabs', pixel_size=1, column_names=['x', 'y
         locs_data, weights = prepare_fits(locs_obj, gf_only=True)
     elif format == 'csv':
         locs_df = pd.read_csv(file)
-        locs_data = locs_df[column_names].values / pixel_size
+        locs_data = locs_df[coord_cols].values / pixel_size
 
     return locs_data
 
-def read_map_data(mask_folders, locs_folders,
-                  masks_pattern='_seg.npy', locs_pattern='.locs',
-                  masks_format='smalllabs', locs_format='smalllabs'):
+# def read_map_data(labels_folders, locs_folders,
+#                   masks_pattern='_seg.npy', locs_pattern='.locs',
+#                   masks_format='cellpose', locs_format='csv'):
+#     """
+#     Read labels and localization data.
+    
+#     Parameters
+#     ----------
+#     labels_folders : list[str]
+#     locs_folders : list[str]
+#     masks_pattern : str
+#         e.g. "_seg.npy"
+#     locs_pattern : str
+#     masks_format : str
+#         "cellpose" or "smalllabs"
+#     locs_format : str
+#         "csv" or "smalllabs
+#     """
+#     masks_list = []
+#     locs_list = []
+
+#     for mask_folder, locs_folder in zip(labels_folders, locs_folders):
+#         mask_files = glob(join(mask_folder, '*' + masks_pattern))
+#         base_names = [basename(file).split(masks_pattern)[0] for file in mask_files]
+#         for base_name in base_names:
+#             masks_file = join(mask_folder, base_name+masks_pattern)
+#             locs_file  = join(locs_folder, base_name+locs_pattern)
+#             print('mf\t', masks_file)
+#             print('lf\t', locs_file)
+#             if exists(masks_file) and exists(locs_file):
+#                 masks = np.load(masks_file, allow_pickle=True).item()['masks']
+#                 locs  = pd.read_csv(locs_file)
+
+#                 masks_list.append(masks)
+#                 locs_list.append(locs)
+
+#     return masks_list, locs_list
+
+def read_map_data(labels_folders, locs_folders,
+                  labels_pattern='_seg.npy', locs_pattern='.locs',
+                  labels_format='cellpose', locs_format='csv',
+                  pixel_size=1, coord_cols=("x", "y")):
     """
+    Read labels and localization data.
+    
+    Parameters
+    ----------
+    labels_folders : list[str]
+    locs_folders : list[str]
+    masks_pattern : str
+        e.g. "_seg.npy"
+    locs_pattern : str
+    masks_format : str
+        "cellpose" or "smalllabs"
+    locs_format : str
+        "csv" or "smalllabs
     """
-    masks_list = []
+    labels_list = []
     locs_list = []
 
-    for mask_folder, locs_folder in zip(mask_folders, locs_folders):
-        mask_files = glob(join(mask_folder, '*' + masks_pattern))
-        base_names = [basename(file).split(masks_pattern)[0] for file in mask_files]
+    for labels_folder, locs_folder in zip(labels_folders, locs_folders):
+        labels_files = glob(join(labels_folder, '*' + labels_pattern))
+        base_names = [basename(file).split(labels_pattern)[0] for file in labels_files]
         for base_name in base_names:
-            masks_file = join(mask_folder, base_name+masks_pattern)
+            labels_file = join(labels_folder, base_name+labels_pattern)
             locs_file  = join(locs_folder, base_name+locs_pattern)
-            if exists(masks_file) and exists(locs_file):
-                masks = np.load(masks_file, allow_pickle=True).item()['masks']
-                locs  = pd.read_csv(locs_file)
+            if exists(labels_file) and exists(locs_file):
+                # labels = np.load(labels_file, allow_pickle=True).item()['masks']
+                labels = read_labels_file(labels_file, format=labels_format)
+                # locs  = pd.read_csv(locs_file)
+                locs = read_locs_file(locs_file, format=locs_format, pixel_size=pixel_size, coord_cols=coord_cols)
 
-                masks_list.append(masks)
+                labels_list.append(labels)
                 locs_list.append(locs)
 
-    return masks_list, locs_list
+    return labels_list, locs_list
 
 
 def calc_cell_maps(folders,
@@ -97,7 +175,7 @@ def calc_cell_maps(folders,
             masks_file = join(folder, base_name+masks_pattern)
             locs_file = join(folder, subfolder, base_name+locs_pattern)
             if exists(masks_file) and exists(locs_file):
-                masks = read_masks_file(masks_file, format=masks_format)
+                masks = read_labels_file(masks_file, format=masks_format)
                 locs_data = read_locs_file(locs_file,
                                            format=locs_format,
                                            pixel_size=pixel_size,

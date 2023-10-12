@@ -883,8 +883,20 @@ def average_sym_elements(values_dict, sym_elements):
 
     return values_sym
 
-def calc_cell_maps(masks_list, locs_list, grid_params):
+def calc_cell_maps(masks_list, locs_list, grid_params, pixel_size=1):
     """
+
+
+    Parameters
+    ----------
+    masks_list : list[np.ndarray]
+        Elements are 2d integer arrays (images)
+    locs_list : list[np.ndarray]
+        Elements are Nx2 arrays with columns corresponding to (row, col) of each localizations
+    grid_params : dict
+        Defines grid.
+    pixel_size : float
+        Locs in locs_list should have units of pixels. If not, use to convert.
     """
     data_dict = {}; j=0
     cell_bool_list = []
@@ -893,7 +905,8 @@ def calc_cell_maps(masks_list, locs_list, grid_params):
         for i_cell in range(1, num_cells+1):
             data_dict[j] = {}
             cell_bool = masks == i_cell
-            data_cell = count_cell(cell_bool, grid_params, locs[['x', 'y']].values/0.049)
+            # data_cell = count_cell(cell_bool, grid_params, locs[['x', 'y']].values/0.049)
+            data_cell = count_cell(cell_bool, grid_params, locs/pixel_size)
             if data_cell:
                 data_dict[j] = data_cell
                 cell_bool_list.append(cell_bool)
@@ -902,3 +915,47 @@ def calc_cell_maps(masks_list, locs_list, grid_params):
                 print('Could not compute adaptive grid for cell #', i_cell)
 
     return data_dict, cell_bool_list
+
+def get_long_axis_vals(values_dict, polygons_dict):
+    """
+    """
+    max_ring_idx = 0
+    max_rad_idx = 0
+    for vk in values_dict.keys():
+        (rad_idx1, rad_idx2), ring_idx = vk
+        if ring_idx > max_ring_idx:
+            max_ring_idx = ring_idx
+        if rad_idx2 > max_rad_idx:
+            max_rad_idx = rad_idx2
+
+    axis_vals_left = []; axis_pos_left = []
+    axis_vals_right = []; axis_pos_right = []
+
+    for ring_idx in range(max_ring_idx, -1, -1):
+        for vk in values_dict.keys():
+            (rad_idx1, rad_idx2), ring_idx_curr = vk
+            if rad_idx1 == 0 and rad_idx2 > 0 and ring_idx_curr == ring_idx:
+                axis_vals_left.append(values_dict[vk])
+                axis_pos_left.append(Polygon(polygons_dict[vk]).centroid.y)
+                if ring_idx == 0:
+                    left_idx = rad_idx2
+            if rad_idx2 == max_rad_idx and rad_idx1 > 0 and ring_idx_curr == ring_idx:
+                axis_vals_right.append(values_dict[vk])
+                axis_pos_right.append(Polygon(polygons_dict[vk]).centroid.y)
+                if ring_idx == 0:
+                    right_idx = rad_idx1
+
+    axis_vals_mid = []; axis_pos_mid = []
+
+    while left_idx != right_idx:
+        for vk in values_dict.keys():
+            (rad_idx1, rad_idx2), ring_idx = vk
+            if ring_idx == 0 and rad_idx1 == left_idx:
+                axis_vals_mid.append(values_dict[vk])
+                axis_pos_mid.append(Polygon(polygons_dict[vk]).centroid.y)
+                left_idx = rad_idx2
+
+    axis_vals = np.array(axis_vals_left + axis_vals_mid + axis_vals_right[::-1])
+    axis_pos = np.array(axis_pos_left + axis_pos_mid + axis_pos_right[::-1])
+
+    return axis_vals, axis_pos

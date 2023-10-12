@@ -274,19 +274,19 @@ def render_map(polygons_dict, values_dict, vmin=None, vmax=None, cmap=None):
     plt.ylim([135,165])
     plt.gca().set_aspect('equal')
 
-    def normalize_map(values_dict, weights=None):
-        """
-        Find weighted average, divide by it, return new dict
-        """
-        if weights is None:
-            weights_array = np.ones(len(values_dict))
-        else:
-            weights_array = np.array(list(weights.values()))
+def normalize_map(values_dict, weights=None):
+    """
+    Find weighted average, divide by it, return new dict
+    """
+    if weights is None:
+        weights_array = np.ones(len(values_dict))
+    else:
+        weights_array = np.array(list(weights.values()))
 
-        values_array = np.array(list(values_dict.values()))
+    values_array = np.array(list(values_dict.values()))
 
-        average = (weights_array * values_array).sum() / weights_array.sum()
+    average = (weights_array * values_array).sum() / weights_array.sum()
 
-        values_normed = {key: val / average for key, val in values_dict.items()}
+    values_normed = {key: val / average for key, val in values_dict.items()}
 
-        return values_normed
+    return values_normed
