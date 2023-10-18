@@ -13,15 +13,442 @@ from shapely.ops import unary_union
 from skimage.morphology import skeletonize, binary_dilation, binary_erosion, disk
 from skimage.measure import find_contours
 
+def add_radials(vb_xy, skin_isxn, rings_frac_pos, radials, rad_idx):
+    """
+    """
+    last_pos = vb_xy; i=0
+    for rfp in rings_frac_pos:
+        pos = rfp*skin_isxn + (1-rfp)*vb_xy
+        radials[rad_idx,i] = np.array([last_pos[::-1], pos[::-1]])
+        last_pos = pos; i+=1
+    radials[rad_idx,i] = np.array([last_pos[::-1], skin_isxn[::-1]])
+    return radials
+
+def average_sym_elements(values_dict, sym_elements):
+    """
+    """
+    values_sym = {}
+    for k, sels in sym_elements.items():
+        n_sels = len(sels)
+        sum_sels = 0
+        for sel in sels:
+            sum_sels += values_dict[sel]
+        average_sels = sum_sels / n_sels
+        for sel in sels:
+            values_sym[sel] = average_sels
+
+    values_sym = {key: values_sym[key] for key in values_dict} # make sure in same order
+
+    return values_sym
+
+def calc_cell_diff(mask, grid_params, diff_dict):
+    """
+    """
+    try:
+        skin, skin_isxns, spine, vertebrae_idx, radials, rings, polygons = get_cell_grid(mask, 
+                                                                                     grid_params['vertebrae_frac_pos'],
+                                                                                     grid_params['rings_frac_pos'],
+                                                                                     grid_params['angles'])
+    except:
+        print('Warning: Could not compute adaptive grid for this shape.')
+        
+    diff_total = {}
+    weights_total = {}
+    shapely_polygons = {}
+    
+    for pkey in polygons:
+        diff_total[pkey] = 0
+        weights_total[pkey] = 0
+        shapely_polygons[pkey] = Polygon(polygons[pkey])
+        
+    for loc1, loc2, weight, D_app in zip(diff_dict['loc1'],
+                                         diff_dict['loc2'],
+                                         diff_dict['weights'],
+                                         diff_dict['D_app']):
+        pt1 = Point(loc1)
+        pt2 = Point(loc2)
+        for pkey in shapely_polygons:
+            if shapely_polygons[pkey].contains(pt1):
+                diff_total[pkey] += (weight/2) * D_app
+                weights_total[pkey] += (weight/2)
+            if shapely_polygons[pkey].contains(pt2):
+                diff_total[pkey] += (weight/2) * D_app
+                weights_total[pkey] += (weight/2)
+                
+    return {'diff_total': diff_total, 'weights_total': weights_total}
+
+def calc_cell_maps(labels_list, locs_list, grid_params, pixel_size=1, coord_cols=('row', 'col'), weights_col=None, label_col=None):
+    """
+
+
+    Parameters
+    ----------
+    labels_list : list[np.ndarray]
+        Elements are 2d integer arrays (images)
+    locs_list : list[pd.DataFrame]
+        list of DataFrames containing localization data
+    grid_params : dict
+        Defines grid.
+    pixel_size : float
+        Locs in locs_list should have units of pixels. If not, use to convert.
+    """
+    data_dict = {}; j=0
+    cell_bool_list = []
+    for labels, locs in zip(labels_list, locs_list):
+        num_cells = labels.max()
+
+        coords = locs[list(coord_cols)].values / pixel_size
+        if label_col is not None:
+            label_vals = locs[label_col].values
+        else:
+            label_vals = None
+        if weights_col is not None:
+            weights = locs[weights_col].values
+        else:
+            weights = np.ones(len(locs), dtype='float')
+        
+        for i_cell in range(1, num_cells+1):
+            data_dict[j] = {}
+            cell_bool = labels == i_cell
+            if label_vals is not None:
+                labels_bool = label_vals == i_cell
+                coords_cell = coords[labels_bool]
+                weights_cell = weights[labels_bool]
+            else:
+                coords_cell = coords
+                weights_cell = weights
+            data_cell = count_cell(cell_bool, grid_params, coords_cell, weights=weights_cell)
+            if data_cell:
+                data_dict[j] = data_cell
+                cell_bool_list.append(cell_bool)
+                j += 1
+            else:
+                print('Could not compute adaptive grid for cell #', i_cell)
+
+    return data_dict, cell_bool_list
+
+def calculate_volumes(spine, skin, polygons, dx=0.1):
+    """
+    Inputs
+    spine : shapely LineString
+    skin : shapely LinearRing
+    polygons : shapely polygons, array of Polygon
+
+    Output :
+    volumes : array of volume values corresponding to each polygon
+    """
+    spine_extended = extend_spine(spine, skin)
+
+    spine_pts = line_interpolate_point(spine_extended, np.arange(-dx/2, spine_extended.length+dx/2, dx), normalized=False)
+    spine_idx = np.arange(len(spine_pts))
+
+    sample_pts_list = []
+    heights_list = []
+
+    xmin, ymin, xmax, ymax = skin.bounds
+
+    for i, pt in zip(spine_idx[1:-1], spine_pts[1:-1]):
+        prev_pt = spine_pts[i-1]
+        next_pt = spine_pts[i+1]
+
+        x0, y0 = get_x(prev_pt), get_y(prev_pt)
+        x,  y  = get_x(pt),      get_y(pt)
+        x1, y1 = get_x(next_pt), get_y(next_pt)
+
+        if y0 != y1: # rib not perfectly vertical
+            slope = -(x1 - x0) / (y1 - y0)
+            rib_line = LineString(([xmin, slope * (xmin - x) + y],
+                                   [xmax, slope * (xmax - x) + y]))
+        else: # rib needs to be vertical
+            rib_line = LineString(([x, ymin],
+                                   [x, ymax]))
+        # could be problem if rib_line perfectly vertical, slope = infinity
+        rib_line = LineString(get_parts(intersection(skin, rib_line)))
+        rib_pts = line_interpolate_point(rib_line, np.arange(dx/2, rib_line.length-dx/2, dx), normalized=False)
+
+        bigR = rib_line.length / 2
+        midpt = line_interpolate_point(rib_line, distance=0.5, normalized=True)
+        littleRs = distance(midpt, rib_pts)
+        hs = np.sqrt(bigR**2 - littleRs**2)
+
+        sample_pts_list.append(rib_pts)
+        heights_list.append(hs)
+
+    sample_pts = np.concatenate(sample_pts_list)
+    heights = np.concatenate(heights_list)
+
+    polygon_rtree = STRtree(polygons)
+
+    raw_counts = shapely_count(sample_pts, polygon_rtree, weights=None)
+    heights_totaled = shapely_count(sample_pts, polygon_rtree, weights=heights)
+
+    areas = np.array([polygon.area for polygon in polygons])
+    volumes = (heights_totaled / raw_counts) * areas
+
+    return volumes
+
+def ccw(A,B,C):
+    """
+    Helper for intersect.
+    """
+    return (C[1]-A[1]) * (B[0]-A[0]) > (B[1]-A[1]) * (C[0]-A[0])
+
+def combine_polygons(polygons, angles, angles_dict, num_ribs, max_rad_idx):
+    """
+    Use angles list to combine polygons near poles to be more appropriately sized.
+    polygons: dictionary containing polygons, dict keys follow weird coordinate system I made up
+    angles: list of 1d numpy array containing angles for each ring, start with innermost, units are radians
+    """
+    new_polygons = {}
+    
+    for ir, angles_ring in enumerate(angles): # ir: ring index, angles_ring: numpy array of angles in radians
+        angles_ring = [0]+list(angles_ring) # include 0 angle by default
+        radial_idx = []
+        
+        for ar in angles_ring:
+            radial_idx.append(angles_dict[ar])
+
+        for ipoly in range(len(radial_idx)-1):
+            start_idx = radial_idx[ipoly]
+            end_idx = radial_idx[ipoly+1]
+            wedge_list_q1 = []
+            wedge_list_q2 = []
+            wedge_list_q3 = []
+            wedge_list_q4 = []
+
+            for iwedge in range(start_idx, end_idx):
+                wedge_list_q1.append(Polygon(polygons[(iwedge, iwedge+1), ir]))
+                wedge_list_q2.append(Polygon(polygons[(convert_rad_idx(iwedge, max_rad_idx, 2),
+                                                       convert_rad_idx(iwedge+1, max_rad_idx, 2)), ir]))
+                wedge_list_q3.append(Polygon(polygons[(convert_rad_idx(iwedge+1, max_rad_idx, 3),
+                                                       convert_rad_idx(iwedge, max_rad_idx, 3)), ir]))
+                wedge_list_q4.append(Polygon(polygons[(convert_rad_idx(iwedge+1, max_rad_idx, 4),
+                                                       convert_rad_idx(iwedge, max_rad_idx, 4)), ir]))
+
+            new_polygons[(radial_idx[ipoly], radial_idx[ipoly+1]), ir] = unary_union(wedge_list_q1)
+
+            new_polygons[(convert_rad_idx(radial_idx[ipoly], max_rad_idx, 2),
+                          convert_rad_idx(radial_idx[ipoly+1], max_rad_idx, 2)), ir] = unary_union(wedge_list_q2)
+
+            new_polygons[(convert_rad_idx(radial_idx[ipoly+1], max_rad_idx, 3),
+                          convert_rad_idx(radial_idx[ipoly], max_rad_idx, 3)), ir] = unary_union(wedge_list_q3)
+
+            new_polygons[(convert_rad_idx(radial_idx[ipoly+1], max_rad_idx, 4),
+                          convert_rad_idx(radial_idx[ipoly], max_rad_idx, 4)), ir] = unary_union(wedge_list_q4)
+           
+    # copy non-polar polygons
+    num_rings = len(angles)
+    num_angles = len(angles_dict) - 1
+    for irib in range(num_angles, num_angles+num_ribs-1):
+        for iring in range(num_rings):
+            new_polygons[(irib, irib+1), iring] = Polygon(polygons[(irib, irib+1), iring])
+            new_polygons[(-irib, -irib-1), iring] = Polygon(polygons[(-irib, -irib-1), iring])
+            
+    return new_polygons
+
+def convert_rad_idx(idx_q1, max_rad_idx, quadrant):
+    """
+    Convert radial line index in quadrant 1 to equivalent radial line index in quadrant 2, 3, or 4.
+
+    Parameters
+    ----------
+    idx_q1 : int
+        Quadrant 1 index to be converted.
+    max_rad_idx : int
+        Highest radial idx in grid.
+    quadrant : int
+        2, 3, or 4.
+
+    Returns
+    -------
+    idx : int
+    """
+    
+    if quadrant == 2:
+        idx = -idx_q1
+    elif quadrant == 3:
+        idx = max_rad_idx - idx_q1
+    elif quadrant == 4:
+        if idx_q1 == 0:
+            idx = max_rad_idx
+        else:
+            idx = -max_rad_idx + idx_q1
+        
+    return idx
+
+def count_cell(mask, grid_params, coords, weights=None):
+    """
+    Calculate adaptive grid. Calculate areas and localizations for each polygon in grid.
+    -
+    Input parameters
+    mask : boolean 2d array
+    grid_params : dict containing vertebrae_frac_pos, rings_frac_pos, angles
+    coords : Nx2 array, first column has rows, second column has columns
+    weights : Nx1 array
+    """
+    data = {}
+    
+    try:
+        cg_dict = get_cell_grid(mask,
+                                grid_params['vertebrae_frac_pos'],
+                                grid_params['rings_frac_pos'],
+                                grid_params['angles'],
+                                grid_params['radius'],
+                                sigma_spine=2,
+                                sigma_skin=1.5)
+        
+        spine = LineString(cg_dict['spine'])
+        skin  = LinearRing(cg_dict['skin'])
+        polygons = shapely.polygons(np.array([LinearRing(rc) for rc in cg_dict['polygons'].values()]))
+
+        data['polygons']    = cg_dict['polygons']
+        data['counts']      = polygon_counts(coords=coords, polygons=cg_dict['polygons'], weights=weights)
+        data['areas']       = polygon_areas(polygons=cg_dict['polygons'])
+        volumes = calculate_volumes(spine, skin, polygons, dx=0.2)
+        data['volumes']     = {k: v for k, v in zip(cg_dict['polygons'].keys(), volumes)}
+    except:
+        print('Warning: Could not compute adaptive grid for this shape.')
+    
+    return data
+
+def divide_dicts(numerator: dict, denominator: dict):
+    """
+    """
+    return {key: numerator[key]/denominator[key] if denominator[key] != 0 else np.nan for key in numerator}
+
+def extend_spine(spine, skin):
+    """
+    Add points to both ends of spine so it intersects with skin.
+    Extension lines have same slopes as end segments of input spine.
+    ---
+    Inputs
+    spine : shapely LineString
+    skin : shapely LinearRing
+    Outputs
+    spine_extended : shapely LineString
+    """
+    xmin, ymin, xmax, ymax = skin.bounds
+    diag = np.sqrt((np.array([xmin-xmax, ymin-ymax])**2).sum())
+
+    # first get new segment for one end
+    x0 = spine.coords.xy[0][0]
+    y0 = spine.coords.xy[1][0]
+    x1 = spine.coords.xy[0][1]
+    y1 = spine.coords.xy[1][1]
+    v = np.array([x0 - x1, y0 - y1])
+    mag = np.sqrt((v**2).sum())
+    probe = LineString(np.array([[x0,y0], (diag/mag)*v + np.array([x0,y0])]))
+    new_end0 = intersection(probe, skin)
+
+    # second segment for other end
+    x0 = spine.coords.xy[0][-1]
+    y0 = spine.coords.xy[1][-1]
+    x1 = spine.coords.xy[0][-2]
+    y1 = spine.coords.xy[1][-2]
+    v = np.array([x0 - x1, y0 - y1])
+    mag = np.sqrt((v**2).sum())
+    probe = LineString(np.array([[x0,y0], (diag/mag)*v + np.array([x0,y0])]))
+    new_end1 = intersection(probe, skin)
+
+    spine_extended = LineString(
+        np.concatenate([
+            get_coordinates(new_end0),
+            get_coordinates(spine),
+            get_coordinates(new_end1)
+            ])
+            )
+
+    return spine_extended
+
+def find_angle(vector1, vector2):
+    """
+    """
+    arg = (np.dot(vector1, vector2) / ((vector1**2).sum()**0.5 * (vector2**2).sum()**0.5)).round(decimals=3)
+    return np.arccos(arg)
+
+def find_skin_intercepts(segment, skin):
+    """
+    """
+    intersections = []
+    isxn_idx_skin = []
+    for i in range(len(skin)-1):
+        skin_seg = [skin[i][::-1], skin[i+1][::-1]]
+        if intersect(segment[0], segment[1], skin_seg[0], skin_seg[1]):
+            intersections.append(findIntersection(segment[0][0], segment[0][1],
+                                   segment[1][0], segment[1][1],
+                                   skin_seg[0][0], skin_seg[0][1],
+                                   skin_seg[1][0], skin_seg[1][1]))
+            # isxn_idx_skin.append(i+1)
+            isxn_idx_skin.append((i,i+1))
+    return np.asarray(intersections), isxn_idx_skin
+
+def find_skin_intersection(vb_xy, slope, ref_segment, skin):
+    """
+    """
+    if ~np.isinf(slope):
+        intercept = vb_xy[1] - slope*vb_xy[0]
+        test_start = [vb_xy[0]-10000, slope * (vb_xy[0]-10000) + intercept] # need check for verticality
+        test_end   = [vb_xy[0]+10000, slope * (vb_xy[0]+10000) + intercept]
+        test_segment = np.array([test_start, test_end])
+    elif np.isinf(slope):
+        test_start = [vb_xy[0], -1]
+        test_end   = [vb_xy[0], 10000]
+        test_segment = np.array([test_start, test_end])
+    
+    intersections, isxn_idx_skin = find_skin_intercepts(test_segment, skin)
+    isxn_vectors = np.array([isxn - vb_xy for isxn in intersections])
+    angles = np.array([find_angle(ref_segment, iv) for iv in isxn_vectors])
+    which_intersection = angles.argmin()
+    correct_intersection = np.array(intersections[which_intersection])
+    correct_idx = isxn_idx_skin[which_intersection]
+    
+    return correct_idx, correct_intersection
+
+def findIntersection(x1, y1, x2, y2, x3, y3, x4, y4):
+    """
+    Find where two line segments intersect
+    """
+    px = ( (x1*y2-y1*x2)*(x3-x4) - (x1-x2)*(x3*y4-y3*x4) ) / ( (x1-x2)*(y3-y4) - (y1-y2)*(x3-x4) ) 
+    py = ( (x1*y2-y1*x2)*(y3-y4) - (y1-y2)*(x3*y4-y3*x4) ) / ( (x1-x2)*(y3-y4) - (y1-y2)*(x3-x4) )
+    return [px, py]
+
+def gauss_kernel(x, sigma):
+    gk = np.exp(-x**2 / (2 * sigma**2))
+    gk[x==0] = 0
+    gk /= gk.sum()
+    return gk
+
 def get_cell_grid(mask, vertebrae_frac_pos, rings_frac_pos, angles, radius,
                  sigma_spine=2, sigma_skin=1.5):
     """
-    -
-    Input arguments
-    mask : boolean 2d array describing cell shape
-    vertebrae_frac_pos : fractional positions to have grid lines. 0 and 1 included by default.
-    rings_frac_pos : fractional ring positions. 0 and 1 included by default.
-    angles : angles at which to draw radial gridlines
+    Main function for finding grid from binary mask and grid specifications.
+    
+    Parameters
+    ----------
+    mask : np.ndarray
+        Boolean 2d array describing cell shape
+    vertebrae_frac_pos : 
+        Fractional positions to have grid lines. 0 and 1 included by default.
+    rings_frac_pos : 
+        Fractional ring positions. 0 and 1 included by default.
+    angles : 
+        Angles at which to draw radial gridlines
+    radius : float
+        Distance from cell ends to transition from rounded to rectangular grid elements.
+    sigma_spine : float, default is 2
+
+
+    Returns
+    -------
+    grid_data : dict
+        Keys : 
+            'skin'
+            'skin_isxns'
+            'spine'
+            'vertebrae_idx'
+            'radials'
+            'rings'
+            'polygons'
     """
     skin = find_contours(mask, level=0.5)[0] # initial skin (outer boundary)
     skin = smooth_skin(skin, lam=0.39, mu=-0.4, N=500, sigma=sigma_skin) # smooth skin
@@ -207,112 +634,49 @@ def get_cell_grid(mask, vertebrae_frac_pos, rings_frac_pos, angles, radius,
     return {'skin': skin, 'skin_isxns': skin_isxns, 'spine': spine,'vertebrae_idx': vertebrae_idx,
             'radials': radials, 'rings': rings, 'polygons': polygons}
 
-def convert_rad_idx(idx_q1, max_rad_idx, quadrant):
-    
-    if quadrant == 2:
-        idx = -idx_q1
-    elif quadrant == 3:
-        idx = max_rad_idx - idx_q1
-    elif quadrant == 4:
-        if idx_q1 == 0:
-            idx = max_rad_idx
-        else:
-            idx = -max_rad_idx + idx_q1
-        
-    return idx
-
-def combine_polygons(polygons, angles, angles_dict, num_ribs, max_rad_idx):
-    """
-    Use angles list to combine polygons near poles to be more appropriately sized.
-    polygons: dictionary containing polygons, dict keys follow weird coordinate system I made up
-    angles: list of 1d numpy array containing angles for each ring, start with innermost, units are radians
-    """
-    new_polygons = {}
-    
-    for ir, angles_ring in enumerate(angles): # ir: ring index, angles_ring: numpy array of angles in radians
-        angles_ring = [0]+list(angles_ring) # include 0 angle by default
-        radial_idx = []
-        
-        for ar in angles_ring:
-            radial_idx.append(angles_dict[ar])
-
-        for ipoly in range(len(radial_idx)-1):
-            start_idx = radial_idx[ipoly]
-            end_idx = radial_idx[ipoly+1]
-            wedge_list_q1 = []
-            wedge_list_q2 = []
-            wedge_list_q3 = []
-            wedge_list_q4 = []
-
-            for iwedge in range(start_idx, end_idx):
-                wedge_list_q1.append(Polygon(polygons[(iwedge, iwedge+1), ir]))
-                wedge_list_q2.append(Polygon(polygons[(convert_rad_idx(iwedge, max_rad_idx, 2),
-                                                       convert_rad_idx(iwedge+1, max_rad_idx, 2)), ir]))
-                wedge_list_q3.append(Polygon(polygons[(convert_rad_idx(iwedge+1, max_rad_idx, 3),
-                                                       convert_rad_idx(iwedge, max_rad_idx, 3)), ir]))
-                wedge_list_q4.append(Polygon(polygons[(convert_rad_idx(iwedge+1, max_rad_idx, 4),
-                                                       convert_rad_idx(iwedge, max_rad_idx, 4)), ir]))
-
-            new_polygons[(radial_idx[ipoly], radial_idx[ipoly+1]), ir] = unary_union(wedge_list_q1)
-
-            new_polygons[(convert_rad_idx(radial_idx[ipoly], max_rad_idx, 2),
-                          convert_rad_idx(radial_idx[ipoly+1], max_rad_idx, 2)), ir] = unary_union(wedge_list_q2)
-
-            new_polygons[(convert_rad_idx(radial_idx[ipoly+1], max_rad_idx, 3),
-                          convert_rad_idx(radial_idx[ipoly], max_rad_idx, 3)), ir] = unary_union(wedge_list_q3)
-
-            new_polygons[(convert_rad_idx(radial_idx[ipoly+1], max_rad_idx, 4),
-                          convert_rad_idx(radial_idx[ipoly], max_rad_idx, 4)), ir] = unary_union(wedge_list_q4)
-           
-    # copy non-polar polygons
-    num_rings = len(angles)
-    num_angles = len(angles_dict) - 1
-    for irib in range(num_angles, num_angles+num_ribs-1):
-        for iring in range(num_rings):
-            new_polygons[(irib, irib+1), iring] = Polygon(polygons[(irib, irib+1), iring])
-            new_polygons[(-irib, -irib-1), iring] = Polygon(polygons[(-irib, -irib-1), iring])
-            
-    return new_polygons
-
-def polygon2numpy(pg):
-    """
-    pg : shapely Polygon
-    """
-    return np.array([pg.boundary.coords.xy[0], pg.boundary.coords.xy[1]]).T
-
-def insert_vertebrae(spine, vertebrae_frac_pos):
+def get_long_axis_vals(values_dict, polygons_dict):
     """
     """
-    cum_length = np.zeros(len(spine))
-    for iv in range(1, len(spine)):
-        length = ((spine[iv] - spine[iv-1])**2).sum()**0.5
-        cum_length[iv] = cum_length[iv-1] + length
-    cum_length_norm = cum_length / cum_length[-1]
-    
-    spine_seeds = np.zeros([len(vertebrae_frac_pos), 2])
-    seed_idx = np.zeros(len(vertebrae_frac_pos))
-    for ivfp, vfp in enumerate(vertebrae_frac_pos):
-        idx = np.arange(len(cum_length_norm))[cum_length_norm > vfp][0].astype('int')
-        S = (vfp - cum_length_norm[idx-1]) / (cum_length_norm[idx] - cum_length_norm[idx-1])
-        spine_seeds[ivfp] = spine[idx-1] + S*(spine[idx] - spine[idx-1])
-        # spine_seeds[ivfp] = (spine[idx] + spine[idx-1]) / 2
-        seed_idx[ivfp] = idx
-    new_spine = np.insert(spine, seed_idx.astype('int'), spine_seeds, axis=0)
-    vertebrae_idx = seed_idx + np.arange(len(seed_idx))
-    vertebrae_idx = np.concatenate(([0], vertebrae_idx, [len(new_spine)-1]))
-    
-    return new_spine, vertebrae_idx.astype('int')
+    max_ring_idx = 0
+    max_rad_idx = 0
+    for vk in values_dict.keys():
+        (rad_idx1, rad_idx2), ring_idx = vk
+        if ring_idx > max_ring_idx:
+            max_ring_idx = ring_idx
+        if rad_idx2 > max_rad_idx:
+            max_rad_idx = rad_idx2
 
-def get_spine(mask):
-    """
-    """
-    # mask_smooth = binary_erosion(mask, footprint=disk(3))
-    # mask_smooth = binary_dilation(mask_smooth, footprint=disk(2))
-    mask_smooth = binary_dilation(mask, footprint=disk(2))
-    spine_image = skeletonize(mask_smooth)
-    spine = get_skel_coords(spine_image)
+    axis_vals_left = []; axis_pos_left = []
+    axis_vals_right = []; axis_pos_right = []
 
-    return spine
+    for ring_idx in range(max_ring_idx, -1, -1):
+        for vk in values_dict.keys():
+            (rad_idx1, rad_idx2), ring_idx_curr = vk
+            if rad_idx1 == 0 and rad_idx2 > 0 and ring_idx_curr == ring_idx:
+                axis_vals_left.append(values_dict[vk])
+                axis_pos_left.append(Polygon(polygons_dict[vk]).centroid.y)
+                if ring_idx == 0:
+                    left_idx = rad_idx2
+            if rad_idx2 == max_rad_idx and rad_idx1 > 0 and ring_idx_curr == ring_idx:
+                axis_vals_right.append(values_dict[vk])
+                axis_pos_right.append(Polygon(polygons_dict[vk]).centroid.y)
+                if ring_idx == 0:
+                    right_idx = rad_idx1
+
+    axis_vals_mid = []; axis_pos_mid = []
+
+    while left_idx != right_idx:
+        for vk in values_dict.keys():
+            (rad_idx1, rad_idx2), ring_idx = vk
+            if ring_idx == 0 and rad_idx1 == left_idx:
+                axis_vals_mid.append(values_dict[vk])
+                axis_pos_mid.append(Polygon(polygons_dict[vk]).centroid.y)
+                left_idx = rad_idx2
+
+    axis_vals = np.array(axis_vals_left + axis_vals_mid + axis_vals_right[::-1])
+    axis_pos = np.array(axis_pos_left + axis_pos_mid + axis_pos_right[::-1])
+
+    return axis_vals, axis_pos
 
 def get_skel_coords(skel):
     """
@@ -348,81 +712,6 @@ def get_skel_coords(skel):
                 
     return skel_rc
 
-def ccw(A,B,C):
-    """
-    Helper for intersect.
-    """
-    return (C[1]-A[1]) * (B[0]-A[0]) > (B[1]-A[1]) * (C[0]-A[0])
-
-def intersect(A,B,C,D):
-    """
-    Return true if line segments AB and CD intersect
-    """
-    return ccw(A,C,D) != ccw(B,C,D) and ccw(A,B,C) != ccw(A,B,D)
-
-def findIntersection(x1, y1, x2, y2, x3, y3, x4, y4):
-    """
-    Find where two line segments intersect
-    """
-    px = ( (x1*y2-y1*x2)*(x3-x4) - (x1-x2)*(x3*y4-y3*x4) ) / ( (x1-x2)*(y3-y4) - (y1-y2)*(x3-x4) ) 
-    py = ( (x1*y2-y1*x2)*(y3-y4) - (y1-y2)*(x3*y4-y3*x4) ) / ( (x1-x2)*(y3-y4) - (y1-y2)*(x3-x4) )
-    return [px, py]
-
-def find_angle(vector1, vector2):
-    """
-    """
-    arg = (np.dot(vector1, vector2) / ((vector1**2).sum()**0.5 * (vector2**2).sum()**0.5)).round(decimals=3)
-    return np.arccos(arg)
-
-def find_skin_intercepts(segment, skin):
-    """
-    """
-    intersections = []
-    isxn_idx_skin = []
-    for i in range(len(skin)-1):
-        skin_seg = [skin[i][::-1], skin[i+1][::-1]]
-        if intersect(segment[0], segment[1], skin_seg[0], skin_seg[1]):
-            intersections.append(findIntersection(segment[0][0], segment[0][1],
-                                   segment[1][0], segment[1][1],
-                                   skin_seg[0][0], skin_seg[0][1],
-                                   skin_seg[1][0], skin_seg[1][1]))
-            # isxn_idx_skin.append(i+1)
-            isxn_idx_skin.append((i,i+1))
-    return np.asarray(intersections), isxn_idx_skin
-
-def find_skin_intersection(vb_xy, slope, ref_segment, skin):
-    """
-    """
-    if ~np.isinf(slope):
-        intercept = vb_xy[1] - slope*vb_xy[0]
-        test_start = [vb_xy[0]-10000, slope * (vb_xy[0]-10000) + intercept] # need check for verticality
-        test_end   = [vb_xy[0]+10000, slope * (vb_xy[0]+10000) + intercept]
-        test_segment = np.array([test_start, test_end])
-    elif np.isinf(slope):
-        test_start = [vb_xy[0], -1]
-        test_end   = [vb_xy[0], 10000]
-        test_segment = np.array([test_start, test_end])
-    
-    intersections, isxn_idx_skin = find_skin_intercepts(test_segment, skin)
-    isxn_vectors = np.array([isxn - vb_xy for isxn in intersections])
-    angles = np.array([find_angle(ref_segment, iv) for iv in isxn_vectors])
-    which_intersection = angles.argmin()
-    correct_intersection = np.array(intersections[which_intersection])
-    correct_idx = isxn_idx_skin[which_intersection]
-    
-    return correct_idx, correct_intersection
-
-def add_radials(vb_xy, skin_isxn, rings_frac_pos, radials, rad_idx):
-    """
-    """
-    last_pos = vb_xy; i=0
-    for rfp in rings_frac_pos:
-        pos = rfp*skin_isxn + (1-rfp)*vb_xy
-        radials[rad_idx,i] = np.array([last_pos[::-1], pos[::-1]])
-        last_pos = pos; i+=1
-    radials[rad_idx,i] = np.array([last_pos[::-1], skin_isxn[::-1]])
-    return radials
-
 def get_skin_segment(skin, idx0, idx1):
     """
     """
@@ -450,54 +739,45 @@ def get_skin_segment(skin, idx0, idx1):
     
     return segment
 
-def gauss_kernel(x, sigma):
-    gk = np.exp(-x**2 / (2 * sigma**2))
-    gk[x==0] = 0
-    gk /= gk.sum()
-    return gk
-
-def smooth_skin(skin, lam=0.39, mu=-0.4, N=500, sigma=1.5):
+def get_spine(mask):
     """
     """
-    nv = len(skin) - 1
-    I = np.identity(nv)
-    W = np.zeros(I.shape)
-    
-    x = np.arange(-nv//2, nv//2)
-    gk = gauss_kernel(x, sigma)
-    gk = np.roll(gk, -nv//2)
-    
-    for v in range(nv):
-        W[v,:] = gk
-        gk = np.roll(gk, 1)
+    # mask_smooth = binary_erosion(mask, footprint=disk(3))
+    # mask_smooth = binary_dilation(mask_smooth, footprint=disk(2))
+    mask_smooth = binary_dilation(mask, footprint=disk(2))
+    spine_image = skeletonize(mask_smooth)
+    spine = get_skel_coords(spine_image)
 
-    K = I - W
-    smooth_operator = matrix_power(np.matmul((I - mu*K), (I - lam*K)), N)
-    skin_smooth = np.matmul(smooth_operator, skin[:-1]) # ignore second end
-    skin_smooth = np.concatenate([skin_smooth,
-                                  [skin_smooth[0]]]) # make ends match
-    
-    return skin_smooth
+    return spine
 
-def smooth_spine(spine, lam=0.39, mu=-0.4, N=500, sigma=2):
+def insert_vertebrae(spine, vertebrae_frac_pos):
     """
-    ---
-    Reference
-    Taubin, G. 1995. Curve and surface smoothing without shrinkage. In: Proceedings of IEEE International Conference on Computer Vision. . pp. 852–857.
-    DOI 10.1109/ICCV.1995.466848
     """
-    nv = len(spine)
-    I = np.identity(nv)
-    W = np.zeros(I.shape)
+    cum_length = np.zeros(len(spine))
+    for iv in range(1, len(spine)):
+        length = ((spine[iv] - spine[iv-1])**2).sum()**0.5
+        cum_length[iv] = cum_length[iv-1] + length
+    cum_length_norm = cum_length / cum_length[-1]
     
-    for v in range(nv):
-        W[v,:] = gauss_kernel(np.arange(0-v, nv-v), sigma)
+    spine_seeds = np.zeros([len(vertebrae_frac_pos), 2])
+    seed_idx = np.zeros(len(vertebrae_frac_pos))
+    for ivfp, vfp in enumerate(vertebrae_frac_pos):
+        idx = np.arange(len(cum_length_norm))[cum_length_norm > vfp][0].astype('int')
+        S = (vfp - cum_length_norm[idx-1]) / (cum_length_norm[idx] - cum_length_norm[idx-1])
+        spine_seeds[ivfp] = spine[idx-1] + S*(spine[idx] - spine[idx-1])
+        # spine_seeds[ivfp] = (spine[idx] + spine[idx-1]) / 2
+        seed_idx[ivfp] = idx
+    new_spine = np.insert(spine, seed_idx.astype('int'), spine_seeds, axis=0)
+    vertebrae_idx = seed_idx + np.arange(len(seed_idx))
+    vertebrae_idx = np.concatenate(([0], vertebrae_idx, [len(new_spine)-1]))
+    
+    return new_spine, vertebrae_idx.astype('int')
 
-    K = I - W
-    smooth_operator = matrix_power(np.matmul((I - mu*K), (I - lam*K)), N)
-    spine_smooth = np.matmul(smooth_operator, spine)
-    
-    return spine_smooth
+def intersect(A,B,C,D):
+    """
+    Return true if line segments AB and CD intersect
+    """
+    return ccw(A,C,D) != ccw(B,C,D) and ccw(A,B,C) != ccw(A,B,D)
 
 def polygon_areas(polygons):
     """
@@ -521,54 +801,40 @@ def polygon_counts(coords, polygons, weights=None):
        
     return {pkey: counts[i] for (i, pkey) in enumerate(polygons)}
 
-def shapely_count(shapely_points, polygon_rtree, weights=None):
+def polygon2numpy(pg):
     """
+    pg : shapely Polygon
     """
-    query_results = polygon_rtree.query(shapely_points, predicate='intersects')
+    return np.array([pg.boundary.coords.xy[0], pg.boundary.coords.xy[1]]).T
 
-    n_polygons = len(polygon_rtree.geometries)
+def prepare_diff_data(fits_obj, dT=0.04, px_sz=0.049):
+    """
+    Get D_app and appropriate weights from fits object
+    """
+    diff_dict = {}
+    tracks = fits_obj['tracks'][:].T
+    
+    if tracks.ndim == 2:
+        traj_filter = tracks[:-1:,3] == tracks[1:,3]
 
-    if weights is None:
-        counts = np.bincount(query_results[1,:], minlength=n_polygons)
+        diff_dict['loc1'] = tracks[:-1,1:3][traj_filter]
+        diff_dict['loc2'] = tracks[1:,1:3][traj_filter]
+        diff_dict['n_frames'] = tracks[1:,0][traj_filter] - tracks[:-1,0][traj_filter]
+
+        diff_dict['D_app'] = ((diff_dict['loc2'] - diff_dict['loc1'])**2).sum(axis=1) / (4 * dT * diff_dict['n_frames']) * px_sz**2
+
+        traj_ids = np.unique(tracks[:,3])
+
+        diff_dict['weights'] = np.zeros(traj_filter.sum())
+        for ti in traj_ids:
+            ti_filt = tracks[:-1,3][traj_filter] == ti
+            n_segs = ti_filt.sum()
+            weight = n_segs**-1.
+            diff_dict['weights'][ti_filt] = weight
     else:
-        counts = np.bincount(query_results[1,:], minlength=n_polygons, weights=weights[query_results[0,:]])
-             
-    return counts
-
-def count_cell(mask, grid_params, coords, weights=None):
-    """
-    Calculate adaptive grid. Calculate areas and localizations for each polygon in grid.
-    -
-    Input parameters
-    mask : boolean 2d array
-    grid_params : dict containing vertebrae_frac_pos, rings_frac_pos, angles
-    coords : Nx2 array, first column has rows, second column has columns
-    weights : Nx1 array
-    """
-    data = {}
+        diff_dict = None
     
-    try:
-        cg_dict = get_cell_grid(mask,
-                                grid_params['vertebrae_frac_pos'],
-                                grid_params['rings_frac_pos'],
-                                grid_params['angles'],
-                                grid_params['radius'],
-                                sigma_spine=2,
-                                sigma_skin=1.5)
-        
-        spine = LineString(cg_dict['spine'])
-        skin  = LinearRing(cg_dict['skin'])
-        polygons = shapely.polygons(np.array([LinearRing(rc) for rc in cg_dict['polygons'].values()]))
-
-        data['polygons']    = cg_dict['polygons']
-        data['counts']      = polygon_counts(coords=coords, polygons=cg_dict['polygons'], weights=weights)
-        data['areas']       = polygon_areas(polygons=cg_dict['polygons'])
-        volumes = calculate_volumes(spine, skin, polygons, dx=0.2)
-        data['volumes']     = {k: v for k, v in zip(cg_dict['polygons'].keys(), volumes)}
-    except:
-        print('Warning: Could not compute adaptive grid for this shape.')
-    
-    return data
+    return diff_dict
 
 def prepare_fits(fits_obj, use_tracks=False, weight_tracks=True, gf_only=True, segment_range=None):
     """
@@ -619,72 +885,6 @@ def prepare_fits(fits_obj, use_tracks=False, weight_tracks=True, gf_only=True, s
         weights = np.ones(locs.shape[0])
 
     return locs, weights
-
-def prepare_diff_data(fits_obj, dT=0.04, px_sz=0.049):
-    """
-    Get D_app and appropriate weights from fits object
-    """
-    diff_dict = {}
-    tracks = fits_obj['tracks'][:].T
-    
-    if tracks.ndim == 2:
-        traj_filter = tracks[:-1:,3] == tracks[1:,3]
-
-        diff_dict['loc1'] = tracks[:-1,1:3][traj_filter]
-        diff_dict['loc2'] = tracks[1:,1:3][traj_filter]
-        diff_dict['n_frames'] = tracks[1:,0][traj_filter] - tracks[:-1,0][traj_filter]
-
-        diff_dict['D_app'] = ((diff_dict['loc2'] - diff_dict['loc1'])**2).sum(axis=1) / (4 * dT * diff_dict['n_frames']) * px_sz**2
-
-        traj_ids = np.unique(tracks[:,3])
-
-        diff_dict['weights'] = np.zeros(traj_filter.sum())
-        for ti in traj_ids:
-            ti_filt = tracks[:-1,3][traj_filter] == ti
-            n_segs = ti_filt.sum()
-            weight = n_segs**-1.
-            diff_dict['weights'][ti_filt] = weight
-    else:
-        diff_dict = None
-    
-    return diff_dict
-
-
-def calc_cell_diff(mask, grid_params, diff_dict):
-    """
-    """
-    try:
-        skin, skin_isxns, spine, vertebrae_idx, radials, rings, polygons = get_cell_grid(mask, 
-                                                                                     grid_params['vertebrae_frac_pos'],
-                                                                                     grid_params['rings_frac_pos'],
-                                                                                     grid_params['angles'])
-    except:
-        print('Warning: Could not compute adaptive grid for this shape.')
-        
-    diff_total = {}
-    weights_total = {}
-    shapely_polygons = {}
-    
-    for pkey in polygons:
-        diff_total[pkey] = 0
-        weights_total[pkey] = 0
-        shapely_polygons[pkey] = Polygon(polygons[pkey])
-        
-    for loc1, loc2, weight, D_app in zip(diff_dict['loc1'],
-                                         diff_dict['loc2'],
-                                         diff_dict['weights'],
-                                         diff_dict['D_app']):
-        pt1 = Point(loc1)
-        pt2 = Point(loc2)
-        for pkey in shapely_polygons:
-            if shapely_polygons[pkey].contains(pt1):
-                diff_total[pkey] += (weight/2) * D_app
-                weights_total[pkey] += (weight/2)
-            if shapely_polygons[pkey].contains(pt2):
-                diff_total[pkey] += (weight/2) * D_app
-                weights_total[pkey] += (weight/2)
-                
-    return {'diff_total': diff_total, 'weights_total': weights_total}
 
 def set_radius(spine, skin, radius):
     """
@@ -748,109 +948,62 @@ def set_radius(spine, skin, radius):
         
     return newer_spine
 
-def calculate_volumes(spine, skin, polygons, dx=0.1):
+def shapely_count(shapely_points, polygon_rtree, weights=None):
     """
-    Inputs
-    spine : shapely LineString
-    skin : shapely LinearRing
-    polygons : shapely polygons, array of Polygon
-
-    Output :
-    volumes : array of volume values corresponding to each polygon
     """
-    spine_extended = extend_spine(spine, skin)
+    query_results = polygon_rtree.query(shapely_points, predicate='intersects')
 
-    spine_pts = line_interpolate_point(spine_extended, np.arange(-dx/2, spine_extended.length+dx/2, dx), normalized=False)
-    spine_idx = np.arange(len(spine_pts))
+    n_polygons = len(polygon_rtree.geometries)
 
-    sample_pts_list = []
-    heights_list = []
+    if weights is None:
+        counts = np.bincount(query_results[1,:], minlength=n_polygons)
+    else:
+        counts = np.bincount(query_results[1,:], minlength=n_polygons, weights=weights[query_results[0,:]])
+             
+    return counts
 
-    xmin, ymin, xmax, ymax = skin.bounds
-
-    for i, pt in zip(spine_idx[1:-1], spine_pts[1:-1]):
-        prev_pt = spine_pts[i-1]
-        next_pt = spine_pts[i+1]
-
-        x0, y0 = get_x(prev_pt), get_y(prev_pt)
-        x,  y  = get_x(pt),      get_y(pt)
-        x1, y1 = get_x(next_pt), get_y(next_pt)
-
-        if y0 != y1: # rib not perfectly vertical
-            slope = -(x1 - x0) / (y1 - y0)
-            rib_line = LineString(([xmin, slope * (xmin - x) + y],
-                                   [xmax, slope * (xmax - x) + y]))
-        else: # rib needs to be vertical
-            rib_line = LineString(([x, ymin],
-                                   [x, ymax]))
-        # could be problem if rib_line perfectly vertical, slope = infinity
-        rib_line = LineString(get_parts(intersection(skin, rib_line)))
-        rib_pts = line_interpolate_point(rib_line, np.arange(dx/2, rib_line.length-dx/2, dx), normalized=False)
-
-        bigR = rib_line.length / 2
-        midpt = line_interpolate_point(rib_line, distance=0.5, normalized=True)
-        littleRs = distance(midpt, rib_pts)
-        hs = np.sqrt(bigR**2 - littleRs**2)
-
-        sample_pts_list.append(rib_pts)
-        heights_list.append(hs)
-
-    sample_pts = np.concatenate(sample_pts_list)
-    heights = np.concatenate(heights_list)
-
-    polygon_rtree = STRtree(polygons)
-
-    raw_counts = shapely_count(sample_pts, polygon_rtree, weights=None)
-    heights_totaled = shapely_count(sample_pts, polygon_rtree, weights=heights)
-
-    areas = np.array([polygon.area for polygon in polygons])
-    volumes = (heights_totaled / raw_counts) * areas
-
-    return volumes
-
-def extend_spine(spine, skin):
+def smooth_skin(skin, lam=0.39, mu=-0.4, N=500, sigma=1.5):
     """
-    Add points to both ends of spine so it intersects with skin.
-    Extension lines have same slopes as end segments of input spine.
+    """
+    nv = len(skin) - 1
+    I = np.identity(nv)
+    W = np.zeros(I.shape)
+    
+    x = np.arange(-nv//2, nv//2)
+    gk = gauss_kernel(x, sigma)
+    gk = np.roll(gk, -nv//2)
+    
+    for v in range(nv):
+        W[v,:] = gk
+        gk = np.roll(gk, 1)
+
+    K = I - W
+    smooth_operator = matrix_power(np.matmul((I - mu*K), (I - lam*K)), N)
+    skin_smooth = np.matmul(smooth_operator, skin[:-1]) # ignore second end
+    skin_smooth = np.concatenate([skin_smooth,
+                                  [skin_smooth[0]]]) # make ends match
+    
+    return skin_smooth
+
+def smooth_spine(spine, lam=0.39, mu=-0.4, N=500, sigma=2):
+    """
     ---
-    Inputs
-    spine : shapely LineString
-    skin : shapely LinearRing
-    Outputs
-    spine_extended : shapely LineString
+    Reference
+    Taubin, G. 1995. Curve and surface smoothing without shrinkage. In: Proceedings of IEEE International Conference on Computer Vision. . pp. 852–857.
+    DOI 10.1109/ICCV.1995.466848
     """
-    xmin, ymin, xmax, ymax = skin.bounds
-    diag = np.sqrt((np.array([xmin-xmax, ymin-ymax])**2).sum())
+    nv = len(spine)
+    I = np.identity(nv)
+    W = np.zeros(I.shape)
+    
+    for v in range(nv):
+        W[v,:] = gauss_kernel(np.arange(0-v, nv-v), sigma)
 
-    # first get new segment for one end
-    x0 = spine.coords.xy[0][0]
-    y0 = spine.coords.xy[1][0]
-    x1 = spine.coords.xy[0][1]
-    y1 = spine.coords.xy[1][1]
-    v = np.array([x0 - x1, y0 - y1])
-    mag = np.sqrt((v**2).sum())
-    probe = LineString(np.array([[x0,y0], (diag/mag)*v + np.array([x0,y0])]))
-    new_end0 = intersection(probe, skin)
-
-    # second segment for other end
-    x0 = spine.coords.xy[0][-1]
-    y0 = spine.coords.xy[1][-1]
-    x1 = spine.coords.xy[0][-2]
-    y1 = spine.coords.xy[1][-2]
-    v = np.array([x0 - x1, y0 - y1])
-    mag = np.sqrt((v**2).sum())
-    probe = LineString(np.array([[x0,y0], (diag/mag)*v + np.array([x0,y0])]))
-    new_end1 = intersection(probe, skin)
-
-    spine_extended = LineString(
-        np.concatenate([
-            get_coordinates(new_end0),
-            get_coordinates(spine),
-            get_coordinates(new_end1)
-            ])
-            )
-
-    return spine_extended
+    K = I - W
+    smooth_operator = matrix_power(np.matmul((I - mu*K), (I - lam*K)), N)
+    spine_smooth = np.matmul(smooth_operator, spine)
+    
+    return spine_smooth
 
 def sum_cell_maps(cell_data, val_key='counts'):
 
@@ -862,119 +1015,3 @@ def sum_cell_maps(cell_data, val_key='counts'):
             data_sum[poly_key] += cell_data[cell_key][val_key][poly_key] 
 
     return data_sum
-
-def divide_dicts(numerator: dict, denominator: dict):
-    """
-    """
-    return {key: numerator[key]/denominator[key] if denominator[key] != 0 else np.nan for key in numerator}
-
-def average_sym_elements(values_dict, sym_elements):
-    """
-    """
-    values_sym = {}
-    for k, sels in sym_elements.items():
-        n_sels = len(sels)
-        sum_sels = 0
-        for sel in sels:
-            sum_sels += values_dict[sel]
-        average_sels = sum_sels / n_sels
-        for sel in sels:
-            values_sym[sel] = average_sels
-
-    values_sym = {key: values_sym[key] for key in values_dict} # make sure in same order
-
-    return values_sym
-
-def calc_cell_maps(labels_list, locs_list, grid_params, pixel_size=1, coord_cols=('row', 'col'), weights_col=None, label_col=None):
-    """
-
-
-    Parameters
-    ----------
-    labels_list : list[np.ndarray]
-        Elements are 2d integer arrays (images)
-    locs_list : list[pd.DataFrame]
-        list of DataFrames containing localization data
-    grid_params : dict
-        Defines grid.
-    pixel_size : float
-        Locs in locs_list should have units of pixels. If not, use to convert.
-    """
-    data_dict = {}; j=0
-    cell_bool_list = []
-    for labels, locs in zip(labels_list, locs_list):
-        num_cells = labels.max()
-
-        coords = locs[list(coord_cols)].values / pixel_size
-        if label_col is not None:
-            label_vals = locs[label_col].values
-        else:
-            label_vals = None
-        if weights_col is not None:
-            weights = locs[weights_col].values
-        else:
-            weights = np.ones(len(locs), dtype='float')
-        
-        for i_cell in range(1, num_cells+1):
-            data_dict[j] = {}
-            cell_bool = labels == i_cell
-            if label_vals is not None:
-                labels_bool = label_vals == i_cell
-                coords_cell = coords[labels_bool]
-                weights_cell = weights[labels_bool]
-            else:
-                coords_cell = coords
-                weights_cell = weights
-            data_cell = count_cell(cell_bool, grid_params, coords_cell, weights=weights_cell)
-            if data_cell:
-                data_dict[j] = data_cell
-                cell_bool_list.append(cell_bool)
-                j += 1
-            else:
-                print('Could not compute adaptive grid for cell #', i_cell)
-
-    return data_dict, cell_bool_list
-
-def get_long_axis_vals(values_dict, polygons_dict):
-    """
-    """
-    max_ring_idx = 0
-    max_rad_idx = 0
-    for vk in values_dict.keys():
-        (rad_idx1, rad_idx2), ring_idx = vk
-        if ring_idx > max_ring_idx:
-            max_ring_idx = ring_idx
-        if rad_idx2 > max_rad_idx:
-            max_rad_idx = rad_idx2
-
-    axis_vals_left = []; axis_pos_left = []
-    axis_vals_right = []; axis_pos_right = []
-
-    for ring_idx in range(max_ring_idx, -1, -1):
-        for vk in values_dict.keys():
-            (rad_idx1, rad_idx2), ring_idx_curr = vk
-            if rad_idx1 == 0 and rad_idx2 > 0 and ring_idx_curr == ring_idx:
-                axis_vals_left.append(values_dict[vk])
-                axis_pos_left.append(Polygon(polygons_dict[vk]).centroid.y)
-                if ring_idx == 0:
-                    left_idx = rad_idx2
-            if rad_idx2 == max_rad_idx and rad_idx1 > 0 and ring_idx_curr == ring_idx:
-                axis_vals_right.append(values_dict[vk])
-                axis_pos_right.append(Polygon(polygons_dict[vk]).centroid.y)
-                if ring_idx == 0:
-                    right_idx = rad_idx1
-
-    axis_vals_mid = []; axis_pos_mid = []
-
-    while left_idx != right_idx:
-        for vk in values_dict.keys():
-            (rad_idx1, rad_idx2), ring_idx = vk
-            if ring_idx == 0 and rad_idx1 == left_idx:
-                axis_vals_mid.append(values_dict[vk])
-                axis_pos_mid.append(Polygon(polygons_dict[vk]).centroid.y)
-                left_idx = rad_idx2
-
-    axis_vals = np.array(axis_vals_left + axis_vals_mid + axis_vals_right[::-1])
-    axis_pos = np.array(axis_pos_left + axis_pos_mid + axis_pos_right[::-1])
-
-    return axis_vals, axis_pos
