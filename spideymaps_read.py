@@ -61,18 +61,20 @@ def read_labels_file(file, format='smalllabs'):
 
     return labels
 
-def read_locs_file(file, format='smalllabs', pixel_size=1, coord_cols=("x", "y")):
+def read_locs_file(file, format='smalllabs'):
     """
     return array 2 columns: rows, columns
     """
     if format == 'smalllabs':
         locs_obj = h5py.File(file)
-        locs_data, weights = prepare_fits(locs_obj, gf_only=True)
+        locs_df = sl_to_df(locs_obj)
+        # locs_data, weights = prepare_fits(locs_obj, gf_only=True)
+
     elif format == 'csv':
         locs_df = pd.read_csv(file)
-        locs_data = locs_df[coord_cols].values / pixel_size
+        # locs_data = locs_df[coord_cols].values / pixel_size
 
-    return locs_data
+    return locs_df
 
 # def read_map_data(labels_folders, locs_folders,
 #                   masks_pattern='_seg.npy', locs_pattern='.locs',
@@ -144,7 +146,7 @@ def read_map_data(labels_folders, locs_folders,
                 # labels = np.load(labels_file, allow_pickle=True).item()['masks']
                 labels = read_labels_file(labels_file, format=labels_format)
                 # locs  = pd.read_csv(locs_file)
-                locs = read_locs_file(locs_file, format=locs_format, pixel_size=pixel_size, coord_cols=coord_cols)
+                locs = read_locs_file(locs_file, format=locs_format)
 
                 labels_list.append(labels)
                 locs_list.append(locs)
@@ -152,49 +154,49 @@ def read_map_data(labels_folders, locs_folders,
     return labels_list, locs_list
 
 
-def calc_cell_maps(folders,
-                    subfolder='',
-                    locs_pattern='_fits.mat',
-                    masks_pattern='_PhaseMask.mat',
-                    masks_format='smalllabs',
-                    locs_format='smalllabs',
-                    grid_params=default_grid_params,
-                    column_names=['x', 'y'], # 'row' column name, 'column' column name (palmari reversed)
-                    pixel_size=0.049):
-    """
-    """
-    j = 0; num_cells_total = 0
-    data_dict = {}
-    cell_bool_list = []
+# def calc_cell_maps(folders,
+#                     subfolder='',
+#                     locs_pattern='_fits.mat',
+#                     masks_pattern='_PhaseMask.mat',
+#                     masks_format='smalllabs',
+#                     locs_format='smalllabs',
+#                     grid_params=default_grid_params,
+#                     column_names=['x', 'y'], # 'row' column name, 'column' column name (palmari reversed)
+#                     pixel_size=0.049):
+#     """
+#     """
+#     j = 0; num_cells_total = 0
+#     data_dict = {}
+#     cell_bool_list = []
 
-    for folder in folders:
-        print(folder)
-        files = glob(join(folder, '*' + masks_pattern)) # identify mask files
-        base_names = [basename(file).split(masks_pattern)[0] for file in files]
-        for base_name in base_names:
-            masks_file = join(folder, base_name+masks_pattern)
-            locs_file = join(folder, subfolder, base_name+locs_pattern)
-            if exists(masks_file) and exists(locs_file):
-                masks = read_labels_file(masks_file, format=masks_format)
-                locs_data = read_locs_file(locs_file,
-                                           format=locs_format,
-                                           pixel_size=pixel_size,
-                                           column_names=column_names)
-                num_cells = masks.max()
-                for i_cell in range(1, num_cells+1):
-                    data_dict[j] = {}
-                    cell_bool = masks == i_cell
-                    data_cell = count_cell(cell_bool, grid_params, locs_data)
-                    if data_cell:
-                        data_dict[j] = data_cell
-                        cell_bool_list.append(cell_bool)
-                        num_cells_total += 1
-                        j += 1
-                    else:
-                        print('Could not compute adaptive grid for: ',
-                                join(folder, base_name), ' cell #', i_cell)
+#     for folder in folders:
+#         print(folder)
+#         files = glob(join(folder, '*' + masks_pattern)) # identify mask files
+#         base_names = [basename(file).split(masks_pattern)[0] for file in files]
+#         for base_name in base_names:
+#             masks_file = join(folder, base_name+masks_pattern)
+#             locs_file = join(folder, subfolder, base_name+locs_pattern)
+#             if exists(masks_file) and exists(locs_file):
+#                 masks = read_labels_file(masks_file, format=masks_format)
+#                 locs_data = read_locs_file(locs_file,
+#                                            format=locs_format,
+#                                            pixel_size=pixel_size,
+#                                            column_names=column_names)
+#                 num_cells = masks.max()
+#                 for i_cell in range(1, num_cells+1):
+#                     data_dict[j] = {}
+#                     cell_bool = masks == i_cell
+#                     data_cell = count_cell(cell_bool, grid_params, locs_data)
+#                     if data_cell:
+#                         data_dict[j] = data_cell
+#                         cell_bool_list.append(cell_bool)
+#                         num_cells_total += 1
+#                         j += 1
+#                     else:
+#                         print('Could not compute adaptive grid for: ',
+#                                 join(folder, base_name), ' cell #', i_cell)
 
-    return data_dict, cell_bool_list
+#     return data_dict, cell_bool_list
 
 def filter_by_nlocs(locs, minlocs=2, maxlocs=50):
     """
@@ -236,3 +238,37 @@ def filter_by_stepsize(df: pd.DataFrame, minsize: float = 0, maxsize: float = 10
     df_filt = df[size_filter]
 
     return df_filt
+
+def sl_to_df(sl_object):
+    """
+    Convert SMALL-LABS object read from .mat to pandas DataFrame.
+    
+    Parameters
+    ----------
+    sl_object : SMALL-LABS data object, a .mat file read using h5py
+
+    Returns
+    -------
+    pd.DataFrame
+    """
+    if 'fits' in sl_object.keys():
+        df = pd.DataFrame(data={key: sl_object['fits'][key][0,:] for key in sl_object['fits'].keys()})
+    elif 'guesses' in sl_object.keys():
+        df = pd.DataFrame(data={'frame': sl_object['guesses'][0,:],
+                                'row': sl_object['guesses'][1,:],
+                                'col': sl_object['guesses'][2,:]})
+        if 'roinum' in sl_object.keys():
+            df['roinum'] = sl_object['roinum'][0,:]
+
+    if 'trk_filt' in sl_object.keys():
+        df['trk_filt'] = sl_object['trk_filt'][0,:]
+
+    if 'tracks' in sl_object.keys():
+        df['tracked'] = np.isin(df['molid'], sl_object['tracks'][5,:])
+        df['track_id'] = np.nan
+        df.loc[df['tracked']==True, 'track_id'] = sl_object['tracks'][3,:]
+        track_id_max = sl_object['tracks'][3,:].max()
+        n_nottracked = (df['tracked']==False).sum()
+        df.loc[df['tracked']==False, 'track_id'] = np.arange(track_id_max+1, track_id_max+n_nottracked+1)
+
+    return df

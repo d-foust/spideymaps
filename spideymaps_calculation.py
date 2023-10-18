@@ -505,19 +505,20 @@ def polygon_areas(polygons):
     """
     return {pkey: Polygon(polygon).area for pkey, polygon in polygons.items()}
 
-def polygon_counts(locs, polygons, weights=None):
+def polygon_counts(coords, polygons, weights=None):
+    # data['counts']      = polygon_counts(locs=coords, polygons=cg_dict['polygons'], weights=weights)
     """
-    locs: row, col (unit is pixels) from csv or mat - not shapely points
+    coords: row, col (unit is pixels) from csv or mat - not shapely points
     polygons: iterable, arrays of polygon coords row, col (in pixels) - not shapely polygons
     weights: default each loc counts for one 
     """
-    shapely_points = shapely.points(locs)
+    # convert to shapely
+    shapely_points = shapely.points(coords)
     shapely_polygons = shapely.polygons([shapely.linearrings(polygon) for polygon in polygons.values()])
 
     polygon_rtree = STRtree(shapely_polygons)
-
     counts = shapely_count(shapely_points, polygon_rtree, weights=weights)
-                
+       
     return {pkey: counts[i] for (i, pkey) in enumerate(polygons)}
 
 def shapely_count(shapely_points, polygon_rtree, weights=None):
@@ -534,14 +535,15 @@ def shapely_count(shapely_points, polygon_rtree, weights=None):
              
     return counts
 
-def count_cell(mask, grid_params, locs, weights=None):
+def count_cell(mask, grid_params, coords, weights=None):
     """
     Calculate adaptive grid. Calculate areas and localizations for each polygon in grid.
     -
     Input parameters
     mask : boolean 2d array
     grid_params : dict containing vertebrae_frac_pos, rings_frac_pos, angles
-    folder : folder
+    coords : Nx2 array, first column has rows, second column has columns
+    weights : Nx1 array
     """
     data = {}
     
@@ -556,10 +558,10 @@ def count_cell(mask, grid_params, locs, weights=None):
         
         spine = LineString(cg_dict['spine'])
         skin  = LinearRing(cg_dict['skin'])
-        polygons = shapely.polygons(np.array([LinearRing(coords) for coords in cg_dict['polygons'].values()]))
+        polygons = shapely.polygons(np.array([LinearRing(rc) for rc in cg_dict['polygons'].values()]))
 
         data['polygons']    = cg_dict['polygons']
-        data['counts']      = polygon_counts(locs=locs, polygons=cg_dict['polygons'], weights=weights)
+        data['counts']      = polygon_counts(coords=coords, polygons=cg_dict['polygons'], weights=weights)
         data['areas']       = polygon_areas(polygons=cg_dict['polygons'])
         volumes = calculate_volumes(spine, skin, polygons, dx=0.2)
         data['volumes']     = {k: v for k, v in zip(cg_dict['polygons'].keys(), volumes)}
@@ -883,16 +885,16 @@ def average_sym_elements(values_dict, sym_elements):
 
     return values_sym
 
-def calc_cell_maps(masks_list, locs_list, grid_params, pixel_size=1):
+def calc_cell_maps(labels_list, locs_list, grid_params, pixel_size=1, coord_cols=('row', 'col'), weights_col=None, label_col=None):
     """
 
 
     Parameters
     ----------
-    masks_list : list[np.ndarray]
+    labels_list : list[np.ndarray]
         Elements are 2d integer arrays (images)
-    locs_list : list[np.ndarray]
-        Elements are Nx2 arrays with columns corresponding to (row, col) of each localizations
+    locs_list : list[pd.DataFrame]
+        list of DataFrames containing localization data
     grid_params : dict
         Defines grid.
     pixel_size : float
@@ -900,13 +902,30 @@ def calc_cell_maps(masks_list, locs_list, grid_params, pixel_size=1):
     """
     data_dict = {}; j=0
     cell_bool_list = []
-    for masks, locs in zip(masks_list, locs_list):
-        num_cells = masks.max()
+    for labels, locs in zip(labels_list, locs_list):
+        num_cells = labels.max()
+
+        coords = locs[list(coord_cols)].values / pixel_size
+        if label_col is not None:
+            label_vals = locs[label_col].values
+        else:
+            label_vals = None
+        if weights_col is not None:
+            weights = locs[weights_col].values
+        else:
+            weights = np.ones(len(locs), dtype='float')
+        
         for i_cell in range(1, num_cells+1):
             data_dict[j] = {}
-            cell_bool = masks == i_cell
-            # data_cell = count_cell(cell_bool, grid_params, locs[['x', 'y']].values/0.049)
-            data_cell = count_cell(cell_bool, grid_params, locs/pixel_size)
+            cell_bool = labels == i_cell
+            if label_vals is not None:
+                labels_bool = label_vals == i_cell
+                coords_cell = coords[labels_bool]
+                weights_cell = weights[labels_bool]
+            else:
+                coords_cell = coords
+                weights_cell = weights
+            data_cell = count_cell(cell_bool, grid_params, coords_cell, weights=weights_cell)
             if data_cell:
                 data_dict[j] = data_cell
                 cell_bool_list.append(cell_bool)
