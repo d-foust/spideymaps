@@ -15,6 +15,25 @@ from skimage.measure import find_contours
 
 def add_radials(vb_xy, skin_isxn, rings_frac_pos, radials, rad_idx):
     """
+    Calculate radial segments from spine position vb_xy to intersection with skin, skin_isxn.
+
+    Parameters
+    ----------
+    vb_xy : 2-sequence
+        "Vertebrae", (x,y) position on spine.
+    skin_isxn : 2-sequence
+        "Skin", (x,y) position on skin.
+    rings_frac_pos : sequence of floats between 0 and 1
+    radials : dict
+        Where radials are being stored.
+    rad_idx : int
+        Where to store in radials.
+    
+    Returns
+    -------
+    radials : dict
+        Updated radials (line segments)
+        Each value: [[row0, col0], [row1, col1]]
     """
     last_pos = vb_xy; i=0
     for rfp in rings_frac_pos:
@@ -418,6 +437,7 @@ def gauss_kernel(x, sigma):
     gk /= gk.sum()
     return gk
 
+### main grid calculating function ###
 def get_cell_grid(mask, vertebrae_frac_pos, rings_frac_pos, angles, radius,
                  sigma_spine=2, sigma_skin=1.5):
     """
@@ -633,6 +653,7 @@ def get_cell_grid(mask, vertebrae_frac_pos, rings_frac_pos, angles, radius,
     
     return {'skin': skin, 'skin_isxns': skin_isxns, 'spine': spine,'vertebrae_idx': vertebrae_idx,
             'radials': radials, 'rings': rings, 'polygons': polygons}
+######################################
 
 def get_long_axis_vals(values_dict, polygons_dict):
     """

@@ -6,36 +6,29 @@ from skimage.measure import regionprops
 from skimage.transform import rotate
 import seaborn as sns
 
-def symmetric_grid_elements(polygons):
+def calc_model_cell(rois_list): 
     """
-    Find grid elements that are symmetric assuming four-fold symmetry.
+    rois_list : list of 2d arrays of type bool
     """
-
-    max_rad_idx = 0
-    for element in polygons:
-        (a, b), c = element
-        if b > max_rad_idx:
-            max_rad_idx = b
-
-    sym_elements = {}; j = 0
-    for element in polygons:
-        (a, b), c = element
-        if a < b and b <= max_rad_idx // 2:
-            if a == 0:
-                d = max_rad_idx
-            else:
-                d = -(max_rad_idx-a)
-            sym_elements[j] = [((a , b), c),
-                               ((-a , -b), c),
-                               ((max_rad_idx-b, max_rad_idx-a), c),
-                               ((-(max_rad_idx-b), d), c)]
-            j += 1
-        elif a < b and a < max_rad_idx/2 and b > max_rad_idx/2 and max_rad_idx%2 == 1:
-            sym_elements[j] = [((a , b), c),
-                               ((-a , -b), c)]
-            j += 1
-
-    return sym_elements
+    
+    total_cells = len(rois_list)
+    rois_sum = np.zeros([301,301])
+    
+    for roi in rois_list:
+        props = regionprops(roi.astype('int'))
+        theta = props[0]['orientation']
+        centroid = props[0]['centroid']
+        roi_rot = rotate(roi, angle=90-theta*(180/np.pi), center=centroid[::-1], resize=True)
+        roi_bbox = regionprops(roi_rot.astype('int'))[0]['bbox']
+        roi_rot = roi_rot[roi_bbox[0]:roi_bbox[2], roi_bbox[1]:roi_bbox[3]]
+        n_rows, n_cols = roi_rot.shape
+        rois_sum[150-n_rows//2:150+n_rows//2+n_rows%2, 150-n_cols//2:150+n_cols//2+n_cols%2] += roi_rot
+        
+    rois_med = rois_sum >= total_cells/2
+    
+    rois_med_sym = (rois_med.astype('int') + rois_med[:,::-1] + rois_med[::-1,:] + rois_med[::-1,::-1]) >= 2
+        
+    return rois_med_sym
 
 def combine_symmetric_elements(counts, areas, sym_elements, polygons):
     """
@@ -138,6 +131,23 @@ def get_densities(data_dict):
     
     return density_sym, density_sym_norm, density_sym_log2, counts_sym, areas_sym
 
+def normalize_map(values_dict, weights=None):
+    """
+    Find weighted average, divide by it, return new dict
+    """
+    if weights is None:
+        weights_array = np.ones(len(values_dict))
+    else:
+        weights_array = np.array(list(weights.values()))
+
+    values_array = np.array(list(values_dict.values()))
+
+    average = (weights_array * values_array).sum() / weights_array.sum()
+
+    values_normed = {key: val / average for key, val in values_dict.items()}
+
+    return values_normed
+
 def polygon_density(counts, areas):
     """
     Calculate density in counts per pixel.
@@ -166,81 +176,9 @@ def polygon_density(counts, areas):
         
     return density, norm_density, log2_density
 
-def calc_average_diffusion(diff_data, grid_params, symmetrify=True):
-    
-    diff_tot = {}
-    weights_tot = {}
-    
-    cell_idx = np.array([k if isinstance(k, int) else -1 for k in diff_data.keys()])
-    cell_idx = cell_idx[cell_idx >= 0]
-    
-    diff_tot_sym = {}
-    weights_tot_sym = {}
-    
-    grid_keys = diff_data[0]['diff_total'].keys()
-    
-    for gk in grid_keys:
-        diff_tot[gk] = 0
-        weights_tot[gk] = 0
-    
-    for ci in cell_idx:
-        for gk in grid_keys:
-            diff_tot[gk] += diff_data[ci]['diff_total'][gk]
-            weights_tot[gk] += diff_data[ci]['weights_total'][gk]
-        
-    
-    if symmetrify == True:
-        sym_els = symmetric_grid_elements(grid_params['vertebrae_frac_pos'], 
-                            grid_params['rings_frac_pos'],
-                            grid_params['angles'])
-        for se_key in sym_els:
-            sels = sym_els[se_key]
-            diff_tot_sym[sels[0]] = diff_tot[sels[0]]
-            weights_tot_sym[sels[0]] = weights_tot[sels[0]]
-            for sel in sels[1:]:
-                diff_tot_sym[sels[0]] += diff_tot[sel]
-                weights_tot_sym[sels[0]] += weights_tot[sel]
-            for sel in sels[1:]:
-                diff_tot_sym[sel] = diff_tot_sym[sels[0]]
-                weights_tot_sym[sel] = weights_tot_sym[sels[0]]
-                
-        diff_tot = diff_tot_sym
-        weights_tot = weights_tot_sym
-    
-    diff_average = {}
-    for gk in grid_keys:
-        diff_average[gk] = diff_tot[gk] / weights_tot[gk]
-        
-    return diff_average
-
-def calc_model_cell(rois_list): 
-    """
-    rois_list : list of 2d arrays of type bool
-    """
-    
-    total_cells = len(rois_list)
-    rois_sum = np.zeros([301,301])
-    
-    for roi in rois_list:
-        props = regionprops(roi.astype('int'))
-        theta = props[0]['orientation']
-        centroid = props[0]['centroid']
-        roi_rot = rotate(roi, angle=90-theta*(180/np.pi), center=centroid[::-1], resize=True)
-        roi_bbox = regionprops(roi_rot.astype('int'))[0]['bbox']
-        roi_rot = roi_rot[roi_bbox[0]:roi_bbox[2], roi_bbox[1]:roi_bbox[3]]
-        n_rows, n_cols = roi_rot.shape
-        rois_sum[150-n_rows//2:150+n_rows//2+n_rows%2, 150-n_cols//2:150+n_cols//2+n_cols%2] += roi_rot
-        
-    rois_med = rois_sum >= total_cells/2
-    
-    rois_med_sym = (rois_med.astype('int') + rois_med[:,::-1] + rois_med[::-1,:] + rois_med[::-1,::-1]) >= 2
-        
-    return rois_med_sym
-
 def render_map(polygons_dict, values_dict, vmin=None, vmax=None, cmap=None):
 
-    if cmap is None:
-        cmap = sns.color_palette("vlag", as_cmap=True)
+    if cmap is None: cmap = sns.color_palette("vlag", as_cmap=True)
 
     values_array = np.array(list(values_dict.values()))
     if vmin is None:
@@ -274,19 +212,80 @@ def render_map(polygons_dict, values_dict, vmin=None, vmax=None, cmap=None):
     plt.ylim([135,165])
     plt.gca().set_aspect('equal')
 
-def normalize_map(values_dict, weights=None):
+def symmetric_grid_elements(polygons):
     """
-    Find weighted average, divide by it, return new dict
+    Find grid elements that are symmetric assuming four-fold symmetry.
     """
-    if weights is None:
-        weights_array = np.ones(len(values_dict))
-    else:
-        weights_array = np.array(list(weights.values()))
 
-    values_array = np.array(list(values_dict.values()))
+    max_rad_idx = 0
+    for element in polygons:
+        (a, b), c = element
+        if b > max_rad_idx:
+            max_rad_idx = b
 
-    average = (weights_array * values_array).sum() / weights_array.sum()
+    sym_elements = {}; j = 0
+    for element in polygons:
+        (a, b), c = element
+        if a < b and b <= max_rad_idx // 2:
+            if a == 0:
+                d = max_rad_idx
+            else:
+                d = -(max_rad_idx-a)
+            sym_elements[j] = [((a , b), c),
+                               ((-a , -b), c),
+                               ((max_rad_idx-b, max_rad_idx-a), c),
+                               ((-(max_rad_idx-b), d), c)]
+            j += 1
+        elif a < b and a < max_rad_idx/2 and b > max_rad_idx/2 and max_rad_idx%2 == 1:
+            sym_elements[j] = [((a , b), c),
+                               ((-a , -b), c)]
+            j += 1
 
-    values_normed = {key: val / average for key, val in values_dict.items()}
+    return sym_elements
 
-    return values_normed
+# def calc_average_diffusion(diff_data, grid_params, symmetrify=True):
+    
+#     diff_tot = {}
+#     weights_tot = {}
+    
+#     cell_idx = np.array([k if isinstance(k, int) else -1 for k in diff_data.keys()])
+#     cell_idx = cell_idx[cell_idx >= 0]
+    
+#     diff_tot_sym = {}
+#     weights_tot_sym = {}
+    
+#     grid_keys = diff_data[0]['diff_total'].keys()
+    
+#     for gk in grid_keys:
+#         diff_tot[gk] = 0
+#         weights_tot[gk] = 0
+    
+#     for ci in cell_idx:
+#         for gk in grid_keys:
+#             diff_tot[gk] += diff_data[ci]['diff_total'][gk]
+#             weights_tot[gk] += diff_data[ci]['weights_total'][gk]
+        
+    
+#     if symmetrify == True:
+#         sym_els = symmetric_grid_elements(grid_params['vertebrae_frac_pos'], 
+#                             grid_params['rings_frac_pos'],
+#                             grid_params['angles'])
+#         for se_key in sym_els:
+#             sels = sym_els[se_key]
+#             diff_tot_sym[sels[0]] = diff_tot[sels[0]]
+#             weights_tot_sym[sels[0]] = weights_tot[sels[0]]
+#             for sel in sels[1:]:
+#                 diff_tot_sym[sels[0]] += diff_tot[sel]
+#                 weights_tot_sym[sels[0]] += weights_tot[sel]
+#             for sel in sels[1:]:
+#                 diff_tot_sym[sel] = diff_tot_sym[sels[0]]
+#                 weights_tot_sym[sel] = weights_tot_sym[sels[0]]
+                
+#         diff_tot = diff_tot_sym
+#         weights_tot = weights_tot_sym
+    
+#     diff_average = {}
+#     for gk in grid_keys:
+#         diff_average[gk] = diff_tot[gk] / weights_tot[gk]
+        
+#     return diff_average
