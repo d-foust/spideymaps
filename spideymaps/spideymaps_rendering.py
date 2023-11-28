@@ -212,6 +212,8 @@ def render_map(polygons_dict, values_dict, vmin=None, vmax=None, cmap=None):
     plt.ylim([135,165])
     plt.gca().set_aspect('equal')
 
+    return fig, ax
+
 def symmetric_grid_elements(polygons):
     """
     Find grid elements that are symmetric assuming four-fold symmetry.
@@ -242,50 +244,3 @@ def symmetric_grid_elements(polygons):
             j += 1
 
     return sym_elements
-
-# def calc_average_diffusion(diff_data, grid_params, symmetrify=True):
-    
-#     diff_tot = {}
-#     weights_tot = {}
-    
-#     cell_idx = np.array([k if isinstance(k, int) else -1 for k in diff_data.keys()])
-#     cell_idx = cell_idx[cell_idx >= 0]
-    
-#     diff_tot_sym = {}
-#     weights_tot_sym = {}
-    
-#     grid_keys = diff_data[0]['diff_total'].keys()
-    
-#     for gk in grid_keys:
-#         diff_tot[gk] = 0
-#         weights_tot[gk] = 0
-    
-#     for ci in cell_idx:
-#         for gk in grid_keys:
-#             diff_tot[gk] += diff_data[ci]['diff_total'][gk]
-#             weights_tot[gk] += diff_data[ci]['weights_total'][gk]
-        
-    
-#     if symmetrify == True:
-#         sym_els = symmetric_grid_elements(grid_params['vertebrae_frac_pos'], 
-#                             grid_params['rings_frac_pos'],
-#                             grid_params['angles'])
-#         for se_key in sym_els:
-#             sels = sym_els[se_key]
-#             diff_tot_sym[sels[0]] = diff_tot[sels[0]]
-#             weights_tot_sym[sels[0]] = weights_tot[sels[0]]
-#             for sel in sels[1:]:
-#                 diff_tot_sym[sels[0]] += diff_tot[sel]
-#                 weights_tot_sym[sels[0]] += weights_tot[sel]
-#             for sel in sels[1:]:
-#                 diff_tot_sym[sel] = diff_tot_sym[sels[0]]
-#                 weights_tot_sym[sel] = weights_tot_sym[sels[0]]
-                
-#         diff_tot = diff_tot_sym
-#         weights_tot = weights_tot_sym
-    
-#     diff_average = {}
-#     for gk in grid_keys:
-#         diff_average[gk] = diff_tot[gk] / weights_tot[gk]
-        
-#     return diff_average
