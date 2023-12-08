@@ -1,6 +1,7 @@
 """
 Functions for calculating adaptive grid given a binary mask for a rod-shaped bacterium
 """
+
 import numpy as np
 from numpy.linalg import matrix_power
 from scipy.ndimage import convolve
@@ -10,7 +11,7 @@ from shapely import distance, get_coordinates, get_parts, get_x, get_y, intersec
 from shapely import LinearRing, LineString, STRtree
 from shapely.geometry import Polygon, Point
 from shapely.ops import unary_union
-from skimage.morphology import skeletonize, binary_dilation, binary_erosion, disk
+from skimage.morphology import skeletonize, binary_dilation, disk
 from skimage.measure import find_contours
 
 def add_radials(vb_xy, skin_isxn, rings_frac_pos, radials, rad_idx):

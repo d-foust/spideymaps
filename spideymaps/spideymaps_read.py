@@ -6,8 +6,6 @@ import pandas as pd
 import numpy as np
 from scipy.io import loadmat
 
-from spideymaps_calculation import count_cell, prepare_fits
-
 pixel_size = 0.049
 
 vertebrae_frac_pos = np.arange(0.1, 1, 0.1) # how to divide cell along long axis in non-polar region
