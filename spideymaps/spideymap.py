@@ -36,11 +36,32 @@ class Spideymap:
             # space for constructing default mask if none provided
             pass
 
-    def make_grid(self, n_cols=16, n_shells=4, n_phi=None, radius=10, outpars=OUTPARS, midpars=MIDPARS):
+    def make_grid(self,
+                  n_cols=8,
+                  col_edges=None,
+                  n_shells=3,
+                  shell_edges=None,
+                  n_phi=None,
+                  phi_edges=None,
+                  radius=10,
+                  outpars=OUTPARS, 
+                  midpars=MIDPARS):
         """
         """
         self.radius = radius
-        if n_phi is None: n_phi = np.arange(1, n_shells+1)
+
+        # shell edges overrides n_shells
+        if shell_edges is not None:
+            n_shells = len(shell_edges) + 1
+
+        if phi_edges is not None:
+            n_phi = (len(pe)+1 for pe in phi_edges)
+
+        if n_phi is None: 
+            n_phi = np.arange(1, n_shells+1)
+        elif shell_edges is not None:
+            n_phi = np.arange(1, len(shell_edges) + 2)
+        
 
         # define outline
         out = find_contours(self.bimage, level=0.5)[0][:,::-1] # outline
@@ -54,21 +75,27 @@ class Spideymap:
         self.mid = extend_spine(self.mid, self.out)
 
         # build high resolution rings
-        self.ring_pos = np.linspace(0, 1, n_shells+1)[1:-1]
+        if shell_edges is None:
+            self.ring_pos = np.linspace(0, 1, n_shells+1)[1:-1]
+        else: 
+            self.ring_pos = shell_edges 
         self.build_rings(n_cols=30, n_theta=12, midpt_offset=0.5)
 
-        #
+        # initialize dict to store grid elements
         self.polygons = {}
 
         # build polygons in nonpolar region
-        self.col_edge_pos = np.linspace(self.radius, self.mid.length - self.radius, n_cols + 1)
+        if col_edges is None:
+            self.col_edges = np.linspace(self.radius, self.mid.length - self.radius, n_cols + 1)
+        else:
+            self.col_edges = np.array([self.radius, 
+                                      *(np.array(col_edges) * (self.mid.length - 2*self.radius) + self.radius), 
+                                      self.mid.length - self.radius])
         self.build_nonpolar_polygons()
 
         # build polygons in polar regions
         self.phi_list = [np.linspace(0, np.pi, n+1) for n in n_phi]
         self.build_polar_polygons()
-
-        
 
     def build_rings(self, n_cols=30, n_theta=12, midpt_offset=0.5):
         """
@@ -134,7 +161,7 @@ class Spideymap:
         """
         Build polygons for nonpolar region.
         """
-        dists = self.col_edge_pos
+        dists = self.col_edges
 
         midpts = sl.line_interpolate_point(
                     self.mid, 
@@ -230,7 +257,7 @@ class Spideymap:
 
         # remaining rings
         for i_r, phi in enumerate(self.phi_list[1:]):
-            rad0 = build_rad(midpts_l[0], midpts_r[0], bnd=all_rings[i_r+1], origin=midpts[0], theta=np.pi/2+phi[0])
+            rad0 = build_rad(midpts_l[0], midpts_r[0], bnd=all_rings[i_r+1], origin=midpts[0], theta=np.pi/2 + phi[0])
             for i_p, p in enumerate(phi[1:]):
                 rad1 = build_rad(midpts_l[0], midpts_r[0], bnd=all_rings[i_r+1], origin=midpts[0], theta=np.pi/2 + p)
                 pt0 = sl.intersection(rad0, all_rings[i_r])
