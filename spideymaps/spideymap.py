@@ -36,6 +36,8 @@ class Spideymap:
             # space for constructing default mask if none provided
             pass
 
+        self.data = {}
+
     def make_grid(self,
                   n_cols=8,
                   col_edges=None,
@@ -49,20 +51,7 @@ class Spideymap:
         """
         """
         self.radius = radius
-
-        # shell edges overrides n_shells
-        if shell_edges is not None:
-            n_shells = len(shell_edges) + 1
-
-        if phi_edges is not None:
-            n_phi = (len(pe)+1 for pe in phi_edges)
-
-        if n_phi is None: 
-            n_phi = np.arange(1, n_shells+1)
-        elif shell_edges is not None:
-            n_phi = np.arange(1, len(shell_edges) + 2)
         
-
         # define outline
         out = find_contours(self.bimage, level=0.5)[0][:,::-1] # outline
         out = smooth_skin(out, **outpars)
@@ -74,27 +63,45 @@ class Spideymap:
         self.mid = sl.LineString(mid)
         self.mid = extend_spine(self.mid, self.out)
 
-        # build high resolution rings
-        if shell_edges is None:
-            self.ring_pos = np.linspace(0, 1, n_shells+1)[1:-1]
-        else: 
-            self.ring_pos = shell_edges 
-        self.build_rings(n_cols=30, n_theta=12, midpt_offset=0.5)
-
-        # initialize dict to store grid elements
-        self.polygons = {}
-
-        # build polygons in nonpolar region
+        # define column edges
         if col_edges is None:
             self.col_edges = np.linspace(self.radius, self.mid.length - self.radius, n_cols + 1)
         else:
             self.col_edges = np.array([self.radius, 
                                       *(np.array(col_edges) * (self.mid.length - 2*self.radius) + self.radius), 
                                       self.mid.length - self.radius])
+            
+        # define ring edges
+        self.n_shells = n_shells
+        if shell_edges is not None:
+            self.n_shells = len(shell_edges) + 1
+            self.ring_pos = shell_edges
+        elif shell_edges is None:
+            self.ring_pos = np.linspace(0, 1, self.n_shells+1)[1:-1]
+
+        # define angular edges
+        if phi_edges is not None:
+            self.phi_list = [np.pi * np.array([0, *pe, 1]) for pe in phi_edges]
+        elif n_phi is not None:
+            self.phi_list = [np.pi * np.linspace(0, 1, ip+1) for ip in n_phi]
+        elif phi_edges is None and n_phi is None:
+            n_phi = np.arange(1, n_shells+1)
+            self.phi_list = [np.pi * np.linspace(0, 1, ip+1) for ip in n_phi]
+
+        if len(self.phi_list) < n_shells:
+            n_short = self.n_shells - len(self.phi_list)
+            self.phi_list = [*self.phi_list, *n_short*[self.phi_list[-1]]]
+        
+        # build high resolution rings
+        self.build_rings(n_cols=30, n_theta=12, midpt_offset=0.5)
+
+        # initialize dict to store grid elements
+        self.polygons = {}
+
+        # build polygons in nonpolar region
         self.build_nonpolar_polygons()
 
         # build polygons in polar regions
-        self.phi_list = [np.linspace(0, np.pi, n+1) for n in n_phi]
         self.build_polar_polygons()
 
     def build_rings(self, n_cols=30, n_theta=12, midpt_offset=0.5):
@@ -237,7 +244,7 @@ class Spideymap:
             
             rad0 = rad1
 
-    def build_polar_polygons(self,):
+    def build_polar_polygons(self):
         """
         """
         midpts = self._midpts
@@ -256,7 +263,7 @@ class Spideymap:
             rad0 = rad1
 
         # remaining rings
-        for i_r, phi in enumerate(self.phi_list[1:]):
+        for i_r, phi in enumerate(self.phi_list[1:self.n_shells]):
             rad0 = build_rad(midpts_l[0], midpts_r[0], bnd=all_rings[i_r+1], origin=midpts[0], theta=np.pi/2 + phi[0])
             for i_p, p in enumerate(phi[1:]):
                 rad1 = build_rad(midpts_l[0], midpts_r[0], bnd=all_rings[i_r+1], origin=midpts[0], theta=np.pi/2 + p)
@@ -278,7 +285,7 @@ class Spideymap:
             rad0 = rad1
 
         # remaining rings
-        for i_r, phi in enumerate(self.phi_list[1:]):
+        for i_r, phi in enumerate(self.phi_list[1:self.n_shells]):
             rad0 = build_rad(midpts_l[-1], midpts_r[-1], bnd=all_rings[i_r+1], origin=midpts[-1], theta=np.pi/2 - phi[0])
             for i_p, p in enumerate(phi[1:]):
                 rad1 = build_rad(midpts_l[-1], midpts_r[-1], bnd=all_rings[i_r+1], origin=midpts[-1], theta=np.pi/2 - p)
@@ -289,6 +296,34 @@ class Spideymap:
                 self.polygons[i_r+1,i_l_max,i_p+1] = sl.Polygon((*arc0.coords, *arc1.coords[::-1]))
                 rad0 = rad1
 
+    # def count(self, coords, weights=None, name='counts', grid_params={}):
+    #     """
+    #     """
+    #     self.data[name] = {}
+
+    #     points = shapely.points(coords)
+        
+    #     if self.rtree is None:
+
+        
+
+                # data['counts']      = polygon_counts(coords=coords, polygons=cg_dict['polygons'], weights=weights)
+
+# def polygon_counts(coords, polygons, weights=None):
+#     # data['counts']      = polygon_counts(locs=coords, polygons=cg_dict['polygons'], weights=weights)
+#     """
+#     coords: row, col (unit is pixels) from csv or mat - not shapely points
+#     polygons: iterable, arrays of polygon coords row, col (in pixels) - not shapely polygons
+#     weights: default each loc counts for one 
+#     """
+#     # convert to shapely
+#     shapely_points = shapely.points(coords)
+#     shapely_polygons = shapely.polygons([shapely.linearrings(polygon) for polygon in polygons.values()])
+
+#     polygon_rtree = STRtree(shapely_polygons)
+#     counts = shapely_count(shapely_points, polygon_rtree, weights=weights)
+       
+#     return {pkey: counts[i] for (i, pkey) in enumerate(polygons)}
 
 def rotate_and_scale(linestring, theta, origin=None, neworigin=None, scale=1):
     """
