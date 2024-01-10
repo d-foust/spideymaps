@@ -190,7 +190,8 @@ def render_map(polygons_dict, values_dict, vmin=None, vmax=None, cmap=None):
 
     fig, ax = plt.subplots(figsize=(10,5))
     for key in polygons_dict:
-        plt.fill(polygons_dict[key][:,1], polygons_dict[key][:,0], 
+        plt.fill(polygons_dict[key].boundary.xy[0], polygons_dict[key].boundary.xy[1],
+            # polygons_dict[key][:,1], polygons_dict[key][:,0], 
                 facecolor=get_color(values_dict[key], vmin=vmin, vmax=vmax, cmap=cmap),
                 edgecolor='xkcd:white', linewidth=1.5)
     plt.gca().set_aspect('equal')
@@ -199,17 +200,17 @@ def render_map(polygons_dict, values_dict, vmin=None, vmax=None, cmap=None):
     cb.outline.set_color('xkcd:white')
     cb.ax.tick_params(labelsize=18)
 
-    plt.xticks(np.arange(-3,3.1,1) * (1/0.049) + 150, np.arange(-3,3.1), fontsize=14)
-    plt.yticks([])
-    plt.xlabel(r'$\mu m$', fontsize=18)
+    # plt.xticks(np.arange(-3,3.1,1) * (1/0.049) + 150, np.arange(-3,3.1), fontsize=14)
+    # plt.yticks([])
+    # plt.xlabel(r'$\mu m$', fontsize=18)
 
     plt.gca().spines['bottom'].set_color(4*[0])
     plt.gca().spines['top'].set_color(4*[0])
     plt.gca().spines['left'].set_color(4*[0])
     plt.gca().spines['right'].set_color(4*[0])
 
-    plt.xlim([102,198])
-    plt.ylim([135,165])
+    # plt.xlim([102,198])
+    # plt.ylim([135,165])
     plt.gca().set_aspect('equal')
 
     return fig, ax

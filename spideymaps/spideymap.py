@@ -6,6 +6,7 @@ mid : midline
 out : outline
 """
 import numpy as np
+import pandas as pd
 import shapely as sl
 from skimage.measure import find_contours
 
@@ -19,7 +20,6 @@ MIDPARS = dict(lam=0.39, mu=-0.4, N=500, sigma=2)
 
 
 class Spideymap:
-
 
     def __init__(self, bimage: np.ndarray = None):
         """
@@ -103,6 +103,9 @@ class Spideymap:
 
         # build polygons in polar regions
         self.build_polar_polygons()
+
+        # do some inital calculations
+        self.data['areas'] = {k: p.area for k, p in self.polygons.items()}
 
     def build_rings(self, n_cols=30, n_theta=12, midpt_offset=0.5):
         """
@@ -197,6 +200,7 @@ class Spideymap:
             rad1 = build_rad(midpts_l[i_l], midpts_r[i_l], bnd=self.out, origin=midpts[i_l])
             arc0 = midseg
 
+            i_r = 0
             for i_r, ring in enumerate(self.rings):
                 pt0 = sl.intersection(rad0, ring)
                 pt1 = sl.intersection(rad1, ring)
@@ -224,6 +228,7 @@ class Spideymap:
 
             arc0 = midseg
 
+            i_r = 0
             for i_r, ring in enumerate(self.rings):
                 pt0 = sl.intersection(rad0, ring)
                 pt1 = sl.intersection(rad1, ring)
@@ -275,7 +280,7 @@ class Spideymap:
                 rad0 = rad1
 
         ## second pole
-        i_l_max = len(self._midpts) + 1
+        i_l_max = len(self._midpts)
         phi = self.phi_list[0]
         rad0 = build_rad(midpts_l[-1], midpts_r[-1], bnd=all_rings[0], origin=midpts[-1], theta=np.pi/2 - phi[0])
         for i_p, p in enumerate(phi[1:]):
@@ -296,34 +301,56 @@ class Spideymap:
                 self.polygons[i_r+1,i_l_max,i_p+1] = sl.Polygon((*arc0.coords, *arc1.coords[::-1]))
                 rad0 = rad1
 
-    # def count(self, coords, weights=None, name='counts', grid_params={}):
-    #     """
-    #     """
-    #     self.data[name] = {}
+    def count(self, coords, weights=None, name='counts', keep_assignments=False):
+        """
+        Parameters
+        ----------
+        coords : 
+            Nx2 array-like for x and y coordinates
+        weights :
+            N length array, matches first dimension of coords
+        name : default 'counts'
+            provides key accessing counts in self.data
+        keep_assignments : bool
 
-    #     points = shapely.points(coords)
+        """
+        points = shapely.points(coords)
         
-    #     if self.rtree is None:
+        if hasattr(self, 'rtree') == False:
+            self.rtree = sl.STRtree(list(self.polygons.values()))
 
+        query_results = self.rtree.query(points, predicate='intersects')
+        n_polygons = len(self.rtree.geometries)
+        if weights is None:
+            counts = np.bincount(query_results[1,:], minlength=n_polygons)
+        else:
+            counts = np.bincount(query_results[1,:], 
+                                minlength=n_polygons, 
+                                weights=weights[query_results[0,:]])
+        
+        self.data[name] = {key: count for count, key in zip(counts, self.polygons.keys())}
+        
+        if keep_assignments == True:
+            polygon_keys = np.array(list(self.polygons.keys()))[query_results[1,:].astype('int')]
+
+            assignments = pd.DataFrame(
+                data={'i_pt': query_results[0,:].astype('int'),
+                      'i_r': polygon_keys[:,0],
+                      'i_l': polygon_keys[:,1],
+                      'i_p': polygon_keys[:,2]}
+            )
+            self.data[name+'_assignments'] = assignments
+
+
+        
+
+        
         
 
                 # data['counts']      = polygon_counts(coords=coords, polygons=cg_dict['polygons'], weights=weights)
 
-# def polygon_counts(coords, polygons, weights=None):
-#     # data['counts']      = polygon_counts(locs=coords, polygons=cg_dict['polygons'], weights=weights)
-#     """
-#     coords: row, col (unit is pixels) from csv or mat - not shapely points
-#     polygons: iterable, arrays of polygon coords row, col (in pixels) - not shapely polygons
-#     weights: default each loc counts for one 
-#     """
-#     # convert to shapely
-#     shapely_points = shapely.points(coords)
-#     shapely_polygons = shapely.polygons([shapely.linearrings(polygon) for polygon in polygons.values()])
-
-#     polygon_rtree = STRtree(shapely_polygons)
-#     counts = shapely_count(shapely_points, polygon_rtree, weights=weights)
-       
-#     return {pkey: counts[i] for (i, pkey) in enumerate(polygons)}
+    def areas(self):
+        self.data['areas'] = {k: p.area for k, p in self.polygons.items()}
 
 def rotate_and_scale(linestring, theta, origin=None, neworigin=None, scale=1):
     """
