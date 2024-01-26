@@ -21,20 +21,32 @@ MIDPARS = dict(lam=0.39, mu=-0.4, N=500, sigma=2)
 
 class Spideymap:
 
-    def __init__(self, bimage: np.ndarray = None):
+    def __init__(
+            self, 
+            bimage = None, 
+            coords = None,
+            xcol = 'x',
+            ycol = 'y'
+            ):
         """
         constructor
 
         Parameters
         ----------
-        bimage 
+        bimage : np.ndarray
             Binary image.
+        coords : pd.DataFrame
+        xcol : str
+        ycol : str
         """ 
         if bimage is not None:
             self.bimage = bimage
         else:
             # space for constructing default mask if none provided
             pass
+
+        if coords is not None:
+            self.set_coords(coords, xcol=xcol, ycol=ycol)
 
         self.data = {}
 
@@ -301,32 +313,43 @@ class Spideymap:
                 self.polygons[i_r+1,i_l_max,i_p+1] = sl.Polygon((*arc0.coords, *arc1.coords[::-1]))
                 rad0 = rad1
 
-    def count(self, coords, weights=None, name='counts', keep_assignments=False):
+    def count(self, 
+              coords=None, 
+              xcol='x', 
+              ycol='y', 
+              wcol=None, 
+              name='counts', 
+              keep_assignments=True):
         """
         Parameters
         ----------
-        coords : 
-            Nx2 array-like for x and y coordinates
-        weights :
-            N length array, matches first dimension of coords
+        coords : pd.DataFrame
+        xcol : str
+        ycol : str
+        wcol : str
+            Weights column.
         name : default 'counts'
             provides key accessing counts in self.data
         keep_assignments : bool
 
         """
-        points = shapely.points(coords)
+        if coords is not None:
+            self.set_coords(coords, xcol=xcol, ycol=ycol)
+
+        points = sl.points(coords=self.coords[self.xcol], y=self.coords[self.ycol])
         
         if hasattr(self, 'rtree') == False:
             self.rtree = sl.STRtree(list(self.polygons.values()))
 
         query_results = self.rtree.query(points, predicate='intersects')
         n_polygons = len(self.rtree.geometries)
-        if weights is None:
+        if wcol is None:
             counts = np.bincount(query_results[1,:], minlength=n_polygons)
         else:
+            weights = self.coords[wcol].values()
             counts = np.bincount(query_results[1,:], 
                                 minlength=n_polygons, 
-                                weights=weights[query_results[0,:]])
+                                weights=weights)
         
         self.data[name] = {key: count for count, key in zip(counts, self.polygons.keys())}
         
@@ -339,7 +362,13 @@ class Spideymap:
                       'i_l': polygon_keys[:,1],
                       'i_p': polygon_keys[:,2]}
             )
-            self.data[name+'_assignments'] = assignments
+            # self.data[name+'_assignments'] = assignments
+
+            self.coords = pd.merge(self.coords, 
+                                   assignments,
+                                   how='left', 
+                                   left_index=True, 
+                                   right_on='i_pt')
 
 
         
@@ -351,6 +380,12 @@ class Spideymap:
 
     def areas(self):
         self.data['areas'] = {k: p.area for k, p in self.polygons.items()}
+
+    def set_coords(self, coords, xcol='x', ycol='y'):
+        self.coords = coords
+        self.xcol = xcol
+        self.ycol = ycol
+
 
 def rotate_and_scale(linestring, theta, origin=None, neworigin=None, scale=1):
     """
