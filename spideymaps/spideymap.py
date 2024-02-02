@@ -59,21 +59,31 @@ class Spideymap:
                   phi_edges=None,
                   radius=10,
                   outpars=OUTPARS, 
-                  midpars=MIDPARS):
+                  midpars=MIDPARS,
+                  out=None,
+                  mid=None):
         """
         """
         self.radius = radius
         
         # define outline
-        out = find_contours(self.bimage, level=0.5)[0][:,::-1] # outline
-        out = smooth_skin(out, **outpars)
-        self.out = sl.LinearRing(out)
+        ## only use binary image to find outline if none is provided
+        if out is None:
+            out = find_contours(self.bimage, level=0.5)[0][:,::-1] # outline
+            out = smooth_skin(out, **outpars)
+            self.out = sl.LinearRing(out)
+        else:
+            self.out = out
 
         # define midline
-        mid = get_spine(self.bimage)[:,::-1] # midline, make sure in x,y-format
-        mid = smooth_spine(mid, **midpars) # smooth spine
-        self.mid = sl.LineString(mid)
-        self.mid = extend_spine(self.mid, self.out)
+        ## only use binary image to find midline if none is provided 
+        if mid is None:
+            mid = get_spine(self.bimage)[:,::-1] # midline, make sure in x,y-format
+            mid = smooth_spine(mid, **midpars) # smooth spine
+            self.mid = sl.LineString(mid)
+            self.mid = extend_spine(self.mid, self.out)
+        else:
+            self.mid = mid
 
         # define column edges
         if col_edges is None:
