@@ -3,7 +3,9 @@ Class perfomring calculations on a collection of Spideymaps
 """
 import numpy as np
 import pandas as pd
+import shapely as sl
 
+from .spideymap import extend_spine
 from .spideymap import Spideymap
 from .spideymap import OUTPARS, MIDPARS
 from .spideymaps_rendering import calc_model_cell
@@ -17,6 +19,13 @@ DEFAULT_GRID_PARAMS = dict(n_cols = 8,
                            radius = 10,
                            outpars = OUTPARS,
                            midpars = MIDPARS)
+
+DEFAULT_CC_PARAMS = dict(xl = -10, 
+                         xr = 10, 
+                         a0 = 0, 
+                         a1 = 0, 
+                         a2 = 0, 
+                         r = 10)
 
 class SpideyAtlas:
 
@@ -148,7 +157,7 @@ class SpideyAtlas:
 
         return self.data[sym_key]
             
-    def create_rep_grid(self, mode='binaries', grid_params=DEFAULT_GRID_PARAMS):
+    def create_rep_grid(self, mode='binaries', grid_params=DEFAULT_GRID_PARAMS, cc_params=DEFAULT_CC_PARAMS):
         """
         Create a representative grid for the atlas.
 
@@ -167,9 +176,19 @@ class SpideyAtlas:
         # use colicoords parameters to calculate a representative grid
         elif mode == 'colicoords':
             map = Spideymap()
+            out = calc_outline(**cc_params)
+            out = sl.LinearRing(out)
+            mid = calc_midline(**cc_params)
+            mid = sl.LineString(mid)
+            mid = extend_spine(mid, out)
+            map.make_grid(out=out, mid=mid, **grid_params)
+
+            self.rep_grid = map.polygons
+
 
 def calc_midline(x_arr, a0, a1, a2):
     """
+    From colicoords.
     Calculate p(x).
 
     The function p(x) describes the midline of the cell.
@@ -186,11 +205,14 @@ def calc_midline(x_arr, a0, a1, a2):
     p : :class:`~numpy.ndarray`
         Evaluated polynomial p(x)
     """
-    return a0 + a1 * x_arr + a2 * x_arr ** 2
+    y = a0 + a1 * x_arr + a2 * x_arr ** 2
+    mid = np.array([x_arr, y]).T
+    
+    return mid
 
-# def plot_outline(self, ax=None, **kwargs):
 def calc_outline(xl, xr, a0, a1, a2, r):
     """
+    From colicoords.
     Plot the outline of the cell based on the current coordinate system.
 
     The outline consists of two semicircles and two offset lines to the central parabola.[1]_[2]_
@@ -254,12 +276,9 @@ def calc_outline(xl, xr, a0, a1, a2, r):
     x_all = np.concatenate((cl_x[::-1], x_top, cr_x[::-1], x_bot[::-1]))
     y_all = np.concatenate((cl_y[::-1], y_top, cr_y[::-1], y_bot[::-1]))
 
-    # ax = plt.gca() if ax is None else ax
-    # color = 'r' if 'color' not in kwargs else kwargs.pop('color')
-    # line, = ax.plot(x_all, y_all, color=color, **kwargs)
-    #todo check comma
+    out = np.array([x_all, y_all]).T
 
-    return x_all, y_all
+    return out
 
 def p_dx(x_arr, a1, a2):
     """

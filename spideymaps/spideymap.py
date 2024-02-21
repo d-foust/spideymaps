@@ -61,15 +61,20 @@ class Spideymap:
                   outpars=OUTPARS, 
                   midpars=MIDPARS,
                   out=None,
-                  mid=None):
+                  mid=None,
+                  level=0.5):
         """
+        Parameters
+        ----------
+        mid :
+            If supplied, midshould terminate at out
         """
         self.radius = radius
         
         # define outline
         ## only use binary image to find outline if none is provided
         if out is None:
-            out = find_contours(self.bimage, level=0.5)[0][:,::-1] # outline
+            out = find_contours(self.bimage, level=level)[0][:,::-1] # outline, use first, xy-format
             out = smooth_skin(out, **outpars)
             self.out = sl.LinearRing(out)
         else:
@@ -78,7 +83,7 @@ class Spideymap:
         # define midline
         ## only use binary image to find midline if none is provided 
         if mid is None:
-            mid = get_spine(self.bimage)[:,::-1] # midline, make sure in x,y-format
+            mid = get_spine(self.bimage)[:,::-1] # midline, make sure in xy-format
             mid = smooth_spine(mid, **midpars) # smooth spine
             self.mid = sl.LineString(mid)
             self.mid = extend_spine(self.mid, self.out)
