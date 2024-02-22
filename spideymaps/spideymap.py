@@ -48,7 +48,7 @@ class Spideymap:
         if coords is not None:
             self.set_coords(coords, xcol=xcol, ycol=ycol)
 
-        self.data = {}
+        self.data = pd.DataFrame()
 
     def make_grid(self,
                   n_cols=8,
@@ -132,7 +132,11 @@ class Spideymap:
         self.build_polar_polygons()
 
         # do some inital calculations
-        self.data['areas'] = {k: p.area for k, p in self.polygons.items()}
+        # area calculated by default
+        self.data.index = self.polygons.keys()
+        self.areas()
+        # self.data['areas'] = {k: p.area for k, p in self.polygons.items()}
+
 
     def build_rings(self, n_cols=30, n_theta=12, midpt_offset=0.5):
         """
@@ -331,9 +335,9 @@ class Spideymap:
     def count(self, 
               coords=None, 
               xcol='x', 
-              ycol='y', 
+              ycol='y',
               wcol=None, 
-              name='counts', 
+              name='count',
               keep_assignments=True):
         """
         Parameters
@@ -345,8 +349,6 @@ class Spideymap:
             Weights column.
         name : default 'counts'
             provides key accessing counts in self.data
-        keep_assignments : bool
-
         """
         if coords is not None:
             self.set_coords(coords, xcol=xcol, ycol=ycol)
@@ -366,28 +368,29 @@ class Spideymap:
                                 minlength=n_polygons, 
                                 weights=weights)
         
-        self.data[name] = {key: count for count, key in zip(counts, self.polygons.keys())}
+        # self.data[name] = {key: count for count, key in zip(counts, self.polygons.keys())}
+        self.data[name] = self.data.index.map({key: count for count, key in zip(counts, self.polygons.keys())})
         
-        if keep_assignments == True:
-            polygon_keys = np.array(list(self.polygons.keys()))[query_results[1,:].astype('int')]
+        polygon_keys = np.array(list(self.polygons.keys()))[query_results[1,:].astype('int')]
 
-            assignments = pd.DataFrame(
-                data={'i_pt': query_results[0,:].astype('int'),
-                      'i_r': polygon_keys[:,0],
-                      'i_l': polygon_keys[:,1],
-                      'i_p': polygon_keys[:,2]}
-            )
-            # self.data[name+'_assignments'] = assignments
-            
-            self.coords = pd.merge(self.coords.reset_index(), 
-                                   assignments,
-                                   how='left', 
-                                   left_index=True, 
-                                   right_on='i_pt')
+        assignments = pd.DataFrame(
+            data={'i_pt': query_results[0,:].astype('int'),
+                  'i_r': polygon_keys[:,0],
+                  'i_l': polygon_keys[:,1],
+                  'i_p': polygon_keys[:,2]}
+        )
+        # self.data[name+'_assignments'] = assignments
+        
+        self.coords = pd.merge(self.coords.reset_index(), 
+                                assignments,
+                                how='left', 
+                                left_index=True, 
+                                right_on='i_pt')
                 # data['counts']      = polygon_counts(coords=coords, polygons=cg_dict['polygons'], weights=weights)
 
     def areas(self):
-        self.data['areas'] = {k: p.area for k, p in self.polygons.items()}
+        self.data['area'] = self.data.index.map({k: p.area for k, p in self.polygons.items()})
+        # [self.data.loc[k,'area'] = p.area for k, p in self.polygons.items()]
 
     def set_coords(self, coords, xcol='x', ycol='y'):
         self.coords = coords
