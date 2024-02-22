@@ -378,19 +378,12 @@ class Spideymap:
                       'i_p': polygon_keys[:,2]}
             )
             # self.data[name+'_assignments'] = assignments
-
-            self.coords = pd.merge(self.coords, 
+            
+            self.coords = pd.merge(self.coords.reset_index(), 
                                    assignments,
                                    how='left', 
                                    left_index=True, 
                                    right_on='i_pt')
-
-
-        
-
-        
-        
-
                 # data['counts']      = polygon_counts(coords=coords, polygons=cg_dict['polygons'], weights=weights)
 
     def areas(self):
