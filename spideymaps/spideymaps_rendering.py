@@ -195,22 +195,15 @@ def render_map(polygons_dict, values_dict, vmin=None, vmax=None, cmap=None):
                 facecolor=get_color(values_dict[key], vmin=vmin, vmax=vmax, cmap=cmap),
                 edgecolor='xkcd:white', linewidth=1.5)
     plt.gca().set_aspect('equal')
-    # plt.axis('off')
-    cb = plt.colorbar(sm, shrink=0.30, aspect=10)
+    cb = plt.colorbar(mappable=sm, ax=ax, shrink=0.30, aspect=10)
     cb.outline.set_color('xkcd:white')
     cb.ax.tick_params(labelsize=18)
-
-    # plt.xticks(np.arange(-3,3.1,1) * (1/0.049) + 150, np.arange(-3,3.1), fontsize=14)
-    # plt.yticks([])
-    # plt.xlabel(r'$\mu m$', fontsize=18)
 
     plt.gca().spines['bottom'].set_color(4*[0])
     plt.gca().spines['top'].set_color(4*[0])
     plt.gca().spines['left'].set_color(4*[0])
     plt.gca().spines['right'].set_color(4*[0])
 
-    # plt.xlim([102,198])
-    # plt.ylim([135,165])
     plt.gca().set_aspect('equal')
 
     return fig, ax
