@@ -448,7 +448,7 @@ def build_rad(pt0, pt1, bnd, origin=None, theta=np.pi/2):
                         theta=theta, 
                         origin=pt0,
                         neworigin=origin,
-                        scale=5)
+                        scale=100)
     
     isxn = sl.intersection(rad, bnd)
 

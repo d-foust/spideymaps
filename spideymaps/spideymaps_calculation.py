@@ -115,7 +115,9 @@ def calc_cell_maps(labels_list, locs_list, grid_params, pixel_size=1, coord_cols
     data_dict = {}; j=0
     cell_bool_list = []
     for labels, locs in zip(labels_list, locs_list):
-        num_cells = labels.max()
+
+        cell_nums = np.unique(labels)[1:]
+        # num_cells = len(cell_nums)
 
         coords = locs[list(coord_cols)].values / pixel_size
         if label_col is not None:
@@ -127,7 +129,7 @@ def calc_cell_maps(labels_list, locs_list, grid_params, pixel_size=1, coord_cols
         else:
             weights = np.ones(len(locs), dtype='float')
         
-        for i_cell in range(1, num_cells+1):
+        for i_cell in cell_nums:
             data_dict[j] = {}
             cell_bool = labels == i_cell
             if label_vals is not None:
@@ -714,7 +716,7 @@ def get_skel_coords(skel):
     # need something to handle if # ends > 2
     if len(x_ends) > 2:
         # skeleton has more than 2 ends
-        skel, x_ends, y_ends = reduce_ends(skel, skel_nconn, x_ends, y_ends)
+        skel, x_ends, y_ends = reduce_ends(skel, skel_nconn, x_ends, y_ends, X, Y)
     
     start_pt = [y_ends[0], x_ends[0]]
     end_pt   = [y_ends[1], x_ends[1]]
@@ -739,50 +741,68 @@ def get_skel_coords(skel):
                 
     return skel_rc
 
-def reduce_ends(skel, skel_nconn, x_ends, y_ends):
+def reduce_ends(skel, skel_nconn, x_ends, y_ends, X, Y):
     """
+    Removes one pixel off each end until there are only two ends.
+    Used when there is a weird shape that produces a skeleton with >2 ends.
     """
-    # find 2 ends that are furthest apart
-    # from other ends, remove other pixels until reach intersection
-    dmax = 0
-    for i0, (x_end0, y_end0) in enumerate(zip(x_ends[:-1], y_ends[:-1])):
-        for i1, (x_end1, y_end1) in enumerate(zip(x_ends[i0+1:], y_ends[i0+1:])):
-            d = (x_end0 - x_end1)**2 + (y_end0 - y_end1)**2
-            if d > dmax:
-                i0_dmax = i0
-                i1_dmax = i0 + i1 + 1
-                dmax = d
+    n_ends = len(x_ends)
+    weights = np.ones([3,3]); weights[1,1]=0
 
-    skel_new = skel.copy()
+    while n_ends > 2:
+        skel[x_ends, y_ends] = 0
+        skel_nconn = convolve(skel.astype('int'), weights=weights)
+        skel_nconn[~skel] = 0
+        x_ends = X[skel_nconn==1]
+        y_ends = Y[skel_nconn==1]
+        n_ends = len(x_ends)
 
-    neighbors = [[1,0], [1,1], [0,1], [-1,1],
-                 [-1, 0], [-1,-1], [0,-1], [1,-1]]
+    return skel, x_ends, y_ends
+
+# def reduce_ends(skel, skel_nconn, x_ends, y_ends):
+#     """
+#     """
+#     # find 2 ends that are furthest apart
+#     # from other ends, remove other pixels until reach intersection
+#     dmax = 0
+#     for i0, (x_end0, y_end0) in enumerate(zip(x_ends[:-1], y_ends[:-1])):
+#         for i1, (x_end1, y_end1) in enumerate(zip(x_ends[i0+1:], y_ends[i0+1:])):
+#             d = (x_end0 - x_end1)**2 + (y_end0 - y_end1)**2
+#             if d > dmax:
+#                 i0_dmax = i0
+#                 i1_dmax = i0 + i1 + 1
+#                 dmax = d
+
+#     skel_new = skel.copy()
+
+#     neighbors = [[1,0], [1,1], [0,1], [-1,1],
+#                  [-1, 0], [-1,-1], [0,-1], [1,-1]]
     
-    print(i0_dmax, i1_dmax)
+#     print(i0_dmax, i1_dmax)
     
-    for i in range(len(x_ends)):
-        if i != i0_dmax and i != i1_dmax:
-            print(i)
-            curr_pt = [y_ends[i], x_ends[i]]
-            skel_new[curr_pt[0], curr_pt[1]] = 0
-            at_isxn = False
-            while at_isxn == False:
-                for neighbor in neighbors:
-                    check_pt = [curr_pt[0] + neighbor[0], 
-                                curr_pt[1] + neighbor[1]]
-                    if skel_new[check_pt[0], check_pt[1]] == True:
-                        print('conn: ', skel_nconn[check_pt[0], check_pt[1]])
-                        if skel_nconn[check_pt[0], check_pt[1]] == 2:
-                            skel_new[check_pt[0], check_pt[1]] = False
-                            curr_pt = check_pt
-                        else:
-                            at_isxn = True
-                        continue
+#     for i in range(len(x_ends)):
+#         if i != i0_dmax and i != i1_dmax:
+#             print(i)
+#             curr_pt = [y_ends[i], x_ends[i]]
+#             skel_new[curr_pt[0], curr_pt[1]] = 0
+#             at_isxn = False
+#             while at_isxn == False:
+#                 for neighbor in neighbors:
+#                     check_pt = [curr_pt[0] + neighbor[0], 
+#                                 curr_pt[1] + neighbor[1]]
+#                     if skel_new[check_pt[0], check_pt[1]] == True:
+#                         print('conn: ', skel_nconn[check_pt[0], check_pt[1]])
+#                         if skel_nconn[check_pt[0], check_pt[1]] == 2:
+#                             skel_new[check_pt[0], check_pt[1]] = False
+#                             curr_pt = check_pt
+#                         else:
+#                             at_isxn = True
+#                         continue
 
-    x_ends_new = np.array([x_ends[i0_dmax], x_ends[i1_dmax]])
-    y_ends_new = np.array([y_ends[i0_dmax], y_ends[i1_dmax]])
+#     x_ends_new = np.array([x_ends[i0_dmax], x_ends[i1_dmax]])
+#     y_ends_new = np.array([y_ends[i0_dmax], y_ends[i1_dmax]])
 
-    return skel_new, x_ends_new, y_ends_new
+#     return skel_new, x_ends_new, y_ends_new
 
 def get_skin_segment(skin, idx0, idx1):
     """

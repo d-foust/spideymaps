@@ -24,14 +24,26 @@ default_grid_params = {
     'radius': radius
 }
 
-def filter_by_nlocs(locs, minlocs=2, maxlocs=50):
+def filter_by_nlocs(locs_df, min_locs=2, max_locs=np.inf, track_col='track_id'):
     """
-    filter locs data to exclude locs not in tracks with a minimum number of locs
+    Remove data for tracks with fewer localizations than min_locs and greater than max_locs.
+
+    Parameters
+    ----------
+    locs_df : pd.DataFrame
+    min_locs : int, default 2
+    max_locs : int, default np.inf
+    track_col : str, default 'track_id'
+        Name of column that identifies which track a localization belongs to.
+
+    Returns
+    -------
+    locs_filtered : pd.DataFrame
     """
-    locs_ngroups = locs.groupby('n')
-    locs_linked = locs_ngroups.filter(lambda x: (x['n'].count() >= minlocs) & (x['n'].count() <= maxlocs))
-    
-    return locs_linked.reset_index()
+    locs_ngroups = locs_df.groupby(track_col)
+    locs_filtered = locs_ngroups.filter(lambda x: (x[track_col].count() >= min_locs) & (x[track_col].count() <= max_locs))
+
+    return locs_filtered.reset_index()
 
 def filter_by_stepsize(df: pd.DataFrame, minsize: float = 0, maxsize: float = 100):
     """
