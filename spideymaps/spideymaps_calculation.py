@@ -750,12 +750,14 @@ def reduce_ends(skel, skel_nconn, x_ends, y_ends, X, Y):
     weights = np.ones([3,3]); weights[1,1]=0
 
     while n_ends > 2:
-        skel[x_ends, y_ends] = 0
+        skel[y_ends, x_ends] = 0
         skel_nconn = convolve(skel.astype('int'), weights=weights)
         skel_nconn[~skel] = 0
         x_ends = X[skel_nconn==1]
         y_ends = Y[skel_nconn==1]
         n_ends = len(x_ends)
+
+    skel = skeletonize(skel)
 
     return skel, x_ends, y_ends
 

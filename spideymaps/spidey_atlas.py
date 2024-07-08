@@ -1,5 +1,5 @@
 """
-Class perfomring calculations on a collection of Spideymaps
+Class performing calculations on a collection of Spideymaps
 """
 import numpy as np
 import pandas as pd
@@ -9,6 +9,7 @@ from .spideymap import extend_spine
 from .spideymap import Spideymap
 from .spideymap import OUTPARS, MIDPARS
 from .spideymaps_rendering import calc_model_cell
+
 
 DEFAULT_GRID_PARAMS = dict(n_cols = 8,
                            col_edges = None,
@@ -20,12 +21,14 @@ DEFAULT_GRID_PARAMS = dict(n_cols = 8,
                            outpars = OUTPARS,
                            midpars = MIDPARS)
 
+
 DEFAULT_CC_PARAMS = dict(xl = -10, 
                          xr = 10, 
                          a0 = 0, 
                          a1 = 0, 
                          a2 = 0, 
                          r = 10)
+
 
 class SpideyAtlas:
 
@@ -63,25 +66,66 @@ class SpideyAtlas:
 
         # self.data = {}
         self.data = pd.DataFrame(index=self.pkeys)
+    
+    def add_symmetric_elements(self, col_name='count', symcol_name=None, style='quad'):
+        """
+        """
+        if symcol_name is None:
+            symcol_name = col_name + '_symsum'
 
-    def sum_maps(self, col_name='count'):
-        """
-        Sum map level data, Spideymap.data
-        """
-        map_data_list = [m.data[col_name] for m in self.maps.values()]
-        self.data[col_name] = pd.concat(map_data_list, axis=1).sum(axis=1)
+        if hasattr(self, 'sym_key_sets') == False:
+            self.find_symmetric_sets()
 
-    def sum_coords(self, sumcol_name='count', filt_col=None, filt_val=True):
+        for sym_set in self.sym_key_sets:
+            self.data.loc[[*sym_set], symcol_name] = self.data.loc[[*sym_set], col_name].sum()
+    
+    def align_hamburger_style(self):
         """
-        Sum coordinate level data using index frequency.
+        Align all spideymaps in atlas hamburger style (relative to short axis)
         """
-        if filt_col is None: 
-            coords = self.coords
-        elif filt_col is not None: 
-            coords = self.coords[self.coords[filt_col] == filt_val]
+        i_l_max = 0
+        for i_r, i_l, i_p in list(self.pkeys):
+            if i_l > i_l_max:
+                i_l_max = i_l
 
-        self.data[sumcol_name] = coords.groupby(['i_r', 'i_l', 'i_p']).size()
-        self.data[sumcol_name].fillna(0, inplace=True)
+        maps = self.coords['map_name']
+
+        for map in maps:
+            map_filt = self.coords['map_name'] == map
+            left = (self.coords[map_filt]['i_l'] <= i_l_max // 2 + i_l_max % 2 - 1).sum()
+            right = (self.coords[map_filt]['i_l'] > i_l_max // 2).sum()
+
+
+            if left > right:
+                self.coords[map_filt]['i_l'] = i_l_max - self.coords[map_filt]['i_l']
+
+    def create_rep_grid(self, mode='binaries', grid_params=DEFAULT_GRID_PARAMS, cc_params=DEFAULT_CC_PARAMS):
+        """
+        Create a representative grid for the atlas.
+
+        If mode is from binaries. Use binary images to generate a repensentative cell.
+        """
+        # use binary images of cells to find a representative grid
+        if mode == 'binaries':
+            cell_bimages = [sm.bimage for sm in self.maps.values()]
+            rep_bimage = calc_model_cell(cell_bimages)
+
+            map = Spideymap(bimage=rep_bimage)
+            map.make_grid(**grid_params)
+
+            self.rep_grid = map.polygons
+
+        # use colicoords parameters to calculate a representative grid
+        elif mode == 'colicoords':
+            map = Spideymap()
+            out = calc_outline(**cc_params)
+            out = sl.LinearRing(out)
+            mid = calc_midline(**cc_params)
+            mid = sl.LineString(mid)
+            mid = extend_spine(mid, out)
+            map.make_grid(out=out, mid=mid, **grid_params)
+
+            self.rep_grid = map.polygons
 
     def density(self, num_key='counts_sum', den_key='areas_sum'):
         """
@@ -102,7 +146,7 @@ class SpideyAtlas:
             self.data[rho_key][pkey] = self.data[num_key][pkey] / self.data[den_key][pkey]
             
         return self.data[rho_key]
-            
+    
     def find_symmetric_sets(self):
         """
         This is only for four-fold symmetry for now.
@@ -151,48 +195,26 @@ class SpideyAtlas:
     
         self.sym_key_sets = sym_key_sets
 
-        return self.sym_key_sets
+        return self.sym_key_sets   
     
-    def add_symmetric_elements(self, col_name='count', symcol_name=None, style='quad'):
+    def sum_maps(self, col_name='count'):
         """
+        Sum map level data, Spideymap.data
         """
-        if symcol_name is None:
-            symcol_name = col_name + '_symsum'
+        map_data_list = [m.data[col_name] for m in self.maps.values()]
+        self.data[col_name] = pd.concat(map_data_list, axis=1).sum(axis=1)
 
-        if hasattr(self, 'sym_key_sets') == False:
-            self.find_symmetric_sets()
-
-        for sym_set in self.sym_key_sets:
-            self.data.loc[[*sym_set], symcol_name] = self.data.loc[[*sym_set], col_name].sum()
-
-            
-    def create_rep_grid(self, mode='binaries', grid_params=DEFAULT_GRID_PARAMS, cc_params=DEFAULT_CC_PARAMS):
+    def sum_coords(self, sumcol_name='count', filt_col=None, filt_val=True):
         """
-        Create a representative grid for the atlas.
-
-        If mode is from binaries. Use binary images to generate a repensentative cell.
+        Sum coordinate level data using index frequency.
         """
-        # use binary images of cells to find a representative grid
-        if mode == 'binaries':
-            cell_bimages = [sm.bimage for sm in self.maps.values()]
-            rep_bimage = calc_model_cell(cell_bimages)
+        if filt_col is None: 
+            coords = self.coords
+        elif filt_col is not None: 
+            coords = self.coords[self.coords[filt_col] == filt_val]
 
-            map = Spideymap(bimage=rep_bimage)
-            map.make_grid(**grid_params)
-
-            self.rep_grid = map.polygons
-
-        # use colicoords parameters to calculate a representative grid
-        elif mode == 'colicoords':
-            map = Spideymap()
-            out = calc_outline(**cc_params)
-            out = sl.LinearRing(out)
-            mid = calc_midline(**cc_params)
-            mid = sl.LineString(mid)
-            mid = extend_spine(mid, out)
-            map.make_grid(out=out, mid=mid, **grid_params)
-
-            self.rep_grid = map.polygons
+        self.data[sumcol_name] = coords.groupby(['i_r', 'i_l', 'i_p']).size()
+        self.data[sumcol_name].fillna(0, inplace=True)
 
 
 def calc_midline(x_arr, a0, a1, a2):
