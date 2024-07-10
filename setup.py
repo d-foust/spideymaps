@@ -6,7 +6,7 @@ with open("readme.md", "r") as f:
 
 setuptools.setup(
     name='spideymaps',
-    version='0.0.1',
+    version='0.1.0',
     author='Daniel Foust',
     author_email='djfoust@umich.edu',
     description='For generating heat maps of single-molecule localization data in rod-shaped bacteria.',
