@@ -23,8 +23,8 @@ setuptools.setup(
         'shapely',
         'scikit-image',
     ],
-    classifiers=(
+    classifiers=[
         "Programming Language :: Python :: 3",
         "Operating System :: OS Independent",
-    )
+    ]
 )
