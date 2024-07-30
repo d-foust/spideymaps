@@ -13,19 +13,25 @@ def calc_model_cell(rois_list):
     """
     
     total_cells = len(rois_list)
+
     rois_sum = np.zeros([301,301])
     
     for roi in rois_list:
+        
         props = regionprops(roi.astype('int'))
         theta = props[0]['orientation']
         centroid = props[0]['centroid']
-        roi_rot = rotate(roi, angle=90-theta*(180/np.pi), center=centroid[::-1], resize=True)
+        roi_rot = rotate(roi, 
+                         angle = 90 - theta * (180 / np.pi), 
+                         center = centroid[::-1], 
+                         resize = True)
         roi_bbox = regionprops(roi_rot.astype('int'))[0]['bbox']
         roi_rot = roi_rot[roi_bbox[0]:roi_bbox[2], roi_bbox[1]:roi_bbox[3]]
         n_rows, n_cols = roi_rot.shape
-        rois_sum[150-n_rows//2:150+n_rows//2+n_rows%2, 150-n_cols//2:150+n_cols//2+n_cols%2] += roi_rot
+        rois_sum[150 - n_rows // 2 : 150 + n_rows // 2 + n_rows % 2, 
+                 150 - n_cols // 2 : 150 + n_cols // 2 + n_cols % 2] += roi_rot
         
-    rois_med = rois_sum >= total_cells/2
+    rois_med = rois_sum >= total_cells / 2
     
     rois_med_sym = (rois_med.astype('int') + rois_med[:,::-1] + rois_med[::-1,:] + rois_med[::-1,::-1]) >= 2
         
