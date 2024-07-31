@@ -1,5 +1,5 @@
 from matplotlib.cm import ScalarMappable
-from matplotlib.colors import Normalize
+from matplotlib.colors import Normalize, ListedColormap, LinearSegmentedColormap
 import matplotlib.pyplot as plt
 import numpy as np
 import shapely as sl
@@ -183,55 +183,55 @@ def polygon_density(counts, areas):
         
     return density, norm_density, log2_density
 
-def render_map(polygons_dict, values_dict, vmin=None, vmax=None, cmap=None, pixel_size=1):
+def render_map(polygons_dict, 
+               values_dict,
+               denominator_dict=None,
+               norm_to_mean=False,
+               vmin=None, 
+               vmax=None, 
+               cmap=None, 
+               pixel_size=1):
 
     if cmap is None: cmap = sns.color_palette("vlag", as_cmap=True)
 
-    values_array = np.array(list(values_dict.values()))
+    # values_array = np.array(list(values_dict.values()))
+
+    values_array = np.array([values_dict[key] for key in values_dict])
+
+    if norm_to_mean is True:
+        if denominator_dict is not None:
+            denominator_array = np.array([denominator_dict[key] for key in values_dict])
+            values_mean = (values_array * denominator_array).sum() / denominator_array.sum()
+            values_array = values_array / values_mean
+        else:
+            values_array = values_array / values_array.mean()
+        values_norm_dict = {key: val for key, val in zip(values_dict.keys(), values_array)}
+    else:
+        values_norm_dict = values_dict
+        
     if vmin is None:
         vmin = np.nanmin(values_array)
     if vmax is None:
         vmax = np.nanmax(values_array)
 
-    sm = ScalarMappable(norm=Normalize(vmin=vmin, vmax=vmax, clip=True), cmap=cmap)
+    if isinstance(cmap, ListedColormap):
+        cmap = LinearSegmentedColormap.from_list("custom_linear", cmap.colors, N=256)
+
+    sm = ScalarMappable(norm=Normalize(vmin=vmin, vmax=vmax, clip=True), 
+                        cmap=cmap)
 
     x_center, y_center = sl.MultiPolygon(polygons_dict.values()).centroid.xy
     x_center = x_center[0] * pixel_size
     y_center = y_center[0] * pixel_size
 
     fig, ax = plt.subplots(figsize=(10,5))
-    # x_min = 1000
-    # x_max = -1000
-    # y_min = 1000
-    # y_max = -1000
     for key in polygons_dict:
         x = np.array(polygons_dict[key].boundary.xy[0], dtype='float') * pixel_size - x_center
         y = np.array(polygons_dict[key].boundary.xy[1], dtype='float') * pixel_size - y_center
         plt.fill(x, y,
-                facecolor=get_color(values_dict[key], vmin=vmin, vmax=vmax, cmap=cmap),
-                edgecolor='xkcd:white', linewidth=1.5)
-        # if x.min() < x_min:
-        #     x_min = x.min()
-        # if x.max() > x_max:
-        #     x_max = x.max()
-        # if y.min() < y_min:
-        #     y_min = y.min()
-        # if y.max() > y_max:
-        #     y_max = y.max()
-
-    # x_center = (x_max - x_min) / 2
-    # y_center = (y_max - y_min) / 2
-
-    # range_x = x_max - x_min
-    # range_y = y_max - y_min
-
-    # ax.set_xlim(x_center - range_x / 2, x_center + range_x / 2)
-    # ax.set_ylim(y_center - range_y / 2, y_center + range_y / 2)
-
-    # ticks_x = plt.xticks()[0]
-    # ticks_y = plt.yticks()[0]
-    # ax.set_xticklabels([int(tick - x_center) for tick in ticks_x])
-    # ax.set_yticklabels([int(tick - y_center) for tick in ticks_y])
+                facecolor=sm.to_rgba(values_norm_dict[key]),
+                edgecolor='xkcd:white', 
+                linewidth=1.5)
 
     plt.gca().set_aspect('equal')
     cb = plt.colorbar(mappable=sm, ax=ax, shrink=0.30, aspect=10)
