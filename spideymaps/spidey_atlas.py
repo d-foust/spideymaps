@@ -6,11 +6,12 @@ import pandas as pd
 import shapely as sl
 
 from .spideymap import extend_spine
-from .spideymap import Spideymap
+from .spideymap import get_colicoords_row
 from .spideymap import OUTPARS, MIDPARS
+from .spideymap import Spideymap
 from .spideymaps_rendering import calc_model_cell
 
-
+# default grid parameters
 DEFAULT_GRID_PARAMS = dict(n_cols = 8,
                            col_edges = None,
                            n_shells = 3,
@@ -21,7 +22,7 @@ DEFAULT_GRID_PARAMS = dict(n_cols = 8,
                            outpars = OUTPARS,
                            midpars = MIDPARS)
 
-
+# default colicoords parameters
 DEFAULT_CC_PARAMS = dict(xl = -10, 
                          xr = 10, 
                          a0 = 0, 
@@ -99,7 +100,12 @@ class SpideyAtlas:
             if left > right:
                 self.coords[map_filt]['i_l'] = i_l_max - self.coords[map_filt]['i_l']
 
-    def create_rep_grid(self, mode='binaries', grid_params=DEFAULT_GRID_PARAMS, cc_params=DEFAULT_CC_PARAMS):
+    def create_rep_grid(self, 
+                        mode='binaries', 
+                        grid_params=DEFAULT_GRID_PARAMS, 
+                        cc_params=DEFAULT_CC_PARAMS,
+                        min_length=0,
+                        max_length=np.inf):
         """
         Create a representative grid for the atlas.
 
@@ -107,7 +113,8 @@ class SpideyAtlas:
         """
         # use binary images of cells to find a representative grid
         if mode == 'binaries':
-            cell_bimages = [sm.bimage for sm in self.maps.values()]
+            cell_bimages = [map.bimage for map in self.maps.values() if (map.mid.length >= min_length and map.mid.length < max_length)]
+            # cell_lengths = [map.mid.length for map in maps.values()]
             rep_bimage = calc_model_cell(cell_bimages)
 
             map = Spideymap(bimage=rep_bimage)
@@ -196,13 +203,52 @@ class SpideyAtlas:
         self.sym_key_sets = sym_key_sets
 
         return self.sym_key_sets   
-    
-    def sum_maps(self, col_name='count'):
+
+    def get_cell_lengths(self):
+        """
+        Length of cells in pixels added in new column of SpideyAtlas.coords.
+        """
+        map_names = self.coords['map_name'].unique()
+
+        for map_name in map_names:
+            map = self.maps[map_name]
+            self.coords.loc[self.coords['map_name'] == map_name, 'cell_length'] = map.mid.length
+
+    def get_colicoords(self, delta=1e-6):
+        """
+        """
+        map_names = self.coords['map_name'].unique()
+
+        for map_name in map_names:
+            map_coords = self.coords[self.coords['map_name'] == map_name]
+            map = self.maps[map_name]
+
+            map_coords[['l_abs', 'r_abs', 'theta']] = map_coords.apply(
+                lambda row: pd.Series(
+                    get_colicoords_row(
+                        row,
+                        map.mid,
+                        xcol=map.xcol,
+                        ycol=map.ycol,
+                        delta=delta
+                    )
+                ),
+                axis=1
+            )
+
+            self.coords.loc[self.coords['map_name'] == map_name, 'l_abs'] = map_coords['l_abs']
+            self.coords.loc[self.coords['map_name'] == map_name, 'r_abs'] = map_coords['r_abs']
+            self.coords.loc[self.coords['map_name'] == map_name, 'theta'] = map_coords['theta']
+
+            self.coords.loc[self.coords['map_name'] == map_name, 'cell_length'] = map.mid.length
+
+    def sum_maps(self, map_data_col='count', atlas_data_col=None, min_length=0, max_length=np.inf):
         """
         Sum map level data, Spideymap.data
         """
-        map_data_list = [m.data[col_name] for m in self.maps.values()]
-        self.data[col_name] = pd.concat(map_data_list, axis=1).sum(axis=1)
+        map_data_list = [m.data[map_data_col] for m in self.maps.values() if (m.mid.length >= min_length and m.mid.length < max_length)]
+        if atlas_data_col is None: atlas_data_col = map_data_col
+        self.data[atlas_data_col] = pd.concat(map_data_list, axis=1).sum(axis=1)
 
     def sum_coords(self, sumcol_name='count', filt_col=None, filt_val=True):
         """
@@ -240,6 +286,7 @@ def calc_midline(x_arr, a0, a1, a2):
     mid = np.array([x_arr, y]).T
     
     return mid
+
 
 def calc_outline(xl, xr, a0, a1, a2, r):
     """
@@ -310,6 +357,7 @@ def calc_outline(xl, xr, a0, a1, a2, r):
     out = np.array([x_all, y_all]).T
 
     return out
+
 
 def p_dx(x_arr, a1, a2):
     """

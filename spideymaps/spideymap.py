@@ -49,94 +49,9 @@ class Spideymap:
             self.set_coords(coords, xcol=xcol, ycol=ycol)
 
         self.data = pd.DataFrame()
-
-    def make_grid(self,
-                  n_cols=8,
-                  col_edges=None,
-                  n_shells=3,
-                  shell_edges=None,
-                  n_phi=None,
-                  phi_edges=None,
-                  radius=10,
-                  outpars=OUTPARS, 
-                  midpars=MIDPARS,
-                  out=None,
-                  mid=None,
-                  level=0.5):
-        """
-        Parameters
-        ----------
-        mid :
-            If supplied, midshould terminate at out
-        """
-        self.radius = radius
-        
-        # define outline
-        ## only use binary image to find outline if none is provided
-        if out is None:
-            out = find_contours(self.bimage, level=level)[0][:,::-1] # outline, use first, xy-format
-            out = smooth_skin(out, **outpars)
-            self.out = sl.LinearRing(out)
-        else:
-            self.out = out
-
-        # define midline
-        ## only use binary image to find midline if none is provided 
-        if mid is None:
-            mid = get_spine(self.bimage)[:,::-1] # midline, make sure in xy-format
-            mid = smooth_spine(mid, **midpars) # smooth spine
-            self.mid = sl.LineString(mid)
-            self.mid = extend_spine(self.mid, self.out)
-        else:
-            self.mid = mid
-
-        # define column edges
-        if col_edges is None:
-            self.col_edges = np.linspace(self.radius, self.mid.length - self.radius, n_cols + 1)
-        else:
-            self.col_edges = np.array([self.radius, 
-                                      *(np.array(col_edges) * (self.mid.length - 2*self.radius) + self.radius), 
-                                      self.mid.length - self.radius])
-            
-        # define ring edges
-        self.n_shells = n_shells
-        if shell_edges is not None:
-            self.n_shells = len(shell_edges) + 1
-            self.ring_pos = shell_edges
-        elif shell_edges is None:
-            self.ring_pos = np.linspace(0, 1, self.n_shells+1)[1:-1]
-
-        # define angular edges
-        if phi_edges is not None:
-            self.phi_list = [np.pi * np.array([0, *pe, 1]) for pe in phi_edges]
-        elif n_phi is not None:
-            self.phi_list = [np.pi * np.linspace(0, 1, ip+1) for ip in n_phi]
-        elif phi_edges is None and n_phi is None:
-            n_phi = np.arange(1, n_shells+1)
-            self.phi_list = [np.pi * np.linspace(0, 1, ip+1) for ip in n_phi]
-
-        if len(self.phi_list) < n_shells:
-            n_short = self.n_shells - len(self.phi_list)
-            self.phi_list = [*self.phi_list, *n_short*[self.phi_list[-1]]]
-        
-        # build high resolution rings
-        self.build_rings(n_cols=30, n_theta=12, midpt_offset=0.5)
-
-        # initialize dict to store grid elements
-        self.polygons = {}
-
-        # build polygons in nonpolar region
-        self.build_nonpolar_polygons()
-
-        # build polygons in polar regions
-        self.build_polar_polygons()
-
-        # do some inital calculations
-        # area calculated by default
-        self.data.index = self.polygons.keys()
-        self.areas()
-        # self.data['areas'] = {k: p.area for k, p in self.polygons.items()}
-
+    
+    def areas(self):
+        self.data['area'] = self.data.index.map({k: p.area for k, p in self.polygons.items()})
 
     def build_rings(self, n_cols=30, n_theta=12, midpt_offset=0.5):
         """
@@ -337,8 +252,7 @@ class Spideymap:
               xcol='x', 
               ycol='y',
               wcol=None, 
-              name='count',
-              keep_assignments=True):
+              name='count'):
         """
         Parameters
         ----------
@@ -388,14 +302,163 @@ class Spideymap:
                                 right_on='i_pt')
                 # data['counts']      = polygon_counts(coords=coords, polygons=cg_dict['polygons'], weights=weights)
 
-    def areas(self):
-        self.data['area'] = self.data.index.map({k: p.area for k, p in self.polygons.items()})
-        # [self.data.loc[k,'area'] = p.area for k, p in self.polygons.items()]
+    def get_colicoords(self, delta=1e-6):
+        """
+        """
+        self.coords[['l_abs', 'r_abs', 'theta']] = self.coords.apply(
+            lambda row: pd.Series(
+                get_colicoords_row(row, 
+                                   self.mid,
+                                   xcol=self.xcol,
+                                   ycol=self.ycol,
+                                   delta=delta)
+                                   ), 
+            axis=1
+            )
+
+    def make_grid(self,
+                  n_cols=8,
+                  col_edges=None,
+                  n_shells=3,
+                  shell_edges=None,
+                  n_phi=None,
+                  phi_edges=None,
+                  radius=10,
+                  outpars=OUTPARS, 
+                  midpars=MIDPARS,
+                  out=None,
+                  mid=None,
+                  level=0.5):
+        """
+        Parameters
+        ----------
+        mid :
+            If supplied, midshould terminate at out
+        """
+        self.radius = radius
+        
+        # define outline
+        ## only use binary image to find outline if none is provided
+        if out is None:
+            out = find_contours(self.bimage, level=level)[0][:,::-1] # outline, use first, xy-format
+            out = smooth_skin(out, **outpars)
+            self.out = sl.LinearRing(out)
+        else:
+            self.out = out
+
+        # define midline
+        ## only use binary image to find midline if none is provided 
+        if mid is None:
+            mid = get_spine(self.bimage)[:,::-1] # midline, make sure in xy-format
+            mid = smooth_spine(mid, **midpars) # smooth spine
+            self.mid = sl.LineString(mid)
+            self.mid = extend_spine(self.mid, self.out)
+        else:
+            self.mid = mid
+
+        # define column edges
+        if col_edges is None:
+            self.col_edges = np.linspace(self.radius, self.mid.length - self.radius, n_cols + 1)
+        else:
+            self.col_edges = np.array([self.radius, 
+                                      *(np.array(col_edges) * (self.mid.length - 2*self.radius) + self.radius), 
+                                      self.mid.length - self.radius])
+            
+        # define ring edges
+        self.n_shells = n_shells
+        if shell_edges is not None:
+            self.n_shells = len(shell_edges) + 1
+            self.ring_pos = shell_edges
+        elif shell_edges is None:
+            self.ring_pos = np.linspace(0, 1, self.n_shells+1)[1:-1]
+
+        # define angular edges
+        if phi_edges is not None:
+            self.phi_list = [np.pi * np.array([0, *pe, 1]) for pe in phi_edges]
+        elif n_phi is not None:
+            self.phi_list = [np.pi * np.linspace(0, 1, ip+1) for ip in n_phi]
+        elif phi_edges is None and n_phi is None:
+            n_phi = np.arange(1, n_shells+1)
+            self.phi_list = [np.pi * np.linspace(0, 1, ip+1) for ip in n_phi]
+
+        if len(self.phi_list) < n_shells:
+            n_short = self.n_shells - len(self.phi_list)
+            self.phi_list = [*self.phi_list, *n_short*[self.phi_list[-1]]]
+        
+        # build high resolution rings
+        self.build_rings(n_cols=30, n_theta=12, midpt_offset=0.5)
+
+        # initialize dict to store grid elements
+        self.polygons = {}
+
+        # build polygons in nonpolar region
+        self.build_nonpolar_polygons()
+
+        # build polygons in polar regions
+        self.build_polar_polygons()
+
+        # do some inital calculations
+        # area calculated by default
+        self.data.index = self.polygons.keys()
+        self.areas()
+        # self.data['areas'] = {k: p.area for k, p in self.polygons.items()}
 
     def set_coords(self, coords, xcol='x', ycol='y'):
         self.coords = coords
         self.xcol = xcol
         self.ycol = ycol
+
+
+def get_colicoords_row(row, mid, xcol='col-1', ycol='row-1', delta=1e-6):
+    """
+    Parameters
+    ----------
+    row
+        Row of DataFrame containing x, y coordinate information.
+    mid
+        shapely LineString for midline of cell.
+    """
+    point = sl.Point(row[xcol], row[ycol])
+    l_abs = mid.project(point)
+    r_abs = mid.distance(point)
+
+    point_on_mid = mid.interpolate(l_abs)
+
+    mid_length = mid.length
+    nearest_distance = l_abs
+    if l_abs < delta:
+        nearest_distance = delta
+    elif nearest_distance > mid_length - delta:
+        nearest_distance = mid_length - delta
+
+    # Find points slightly before and after the projection point
+    point_before = mid.interpolate(nearest_distance - delta)
+    point_after = mid.interpolate(nearest_distance + delta)
+    
+    # Calculate the differences in coordinates
+    dx = point_after.x - point_before.x
+    dy = point_after.y - point_before.y
+    
+    # Calculate the slope (dy/dx) and create the tangent vector
+    # tangent_vector = np.array([dx, dy])
+    normal_vector = np.array([-dy, dx])
+    # tangent_angle = math.atan2(dy, dx)
+
+    connecting_vector = np.array([point_on_mid.x - point.x, point_on_mid.y - point.y])
+    
+    theta = get_angle_between_vectors(normal_vector, connecting_vector)
+
+    return l_abs, r_abs, theta
+
+
+def get_angle_between_vectors(v1, v2):
+
+    unit_v1 = v1 / np.linalg.norm(v1)
+    unit_v2 = v2 / np.linalg.norm(v2)
+    dot_product = np.clip(np.dot(unit_v1, unit_v2), -1., 1.)
+    angle = np.arccos(dot_product)
+
+    return np.degrees(angle)
 
 
 def rotate_and_scale(linestring, theta, origin=None, neworigin=None, scale=1):
