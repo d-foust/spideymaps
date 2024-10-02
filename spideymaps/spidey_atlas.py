@@ -4,6 +4,7 @@ Class performing calculations on a collection of Spideymaps
 import numpy as np
 import pandas as pd
 import shapely as sl
+from shapely.ops import unary_union
 
 from .spideymap import extend_spine
 from .spideymap import get_colicoords_row
@@ -100,6 +101,87 @@ class SpideyAtlas:
             if left > right:
                 self.coords[map_filt]['i_l'] = i_l_max - self.coords[map_filt]['i_l']
 
+    def calculate_histograms(self, 
+                             pixel_size=0.049, 
+                             l_rep=None, 
+                             r_rep=None, 
+                             r_buffer=0.1, 
+                             delta=1e-6,
+                             num_l_bins=None,
+                             num_r_bins=None):
+        """
+        """
+        ## check that colicoords have been calculate
+        colicoords_columns = ['l_abs', 'r_abs', 'theta', 'l_rel', 'r_abs_signed']
+        if set(colicoords_columns).issubset(self.coords) is not True:
+            self.get_colicoords(delta=delta)
+
+        ## use rep_grid to find representative absolute dimensions if needed
+        if l_rep is None or r_rep is None:
+            if hasattr(self, 'rep_grid') is False:
+                self.create_rep_grid()
+
+            rep_cell = unary_union(list(self.rep_grid.values()))
+            cell_bounding_box = rep_cell.bounds
+
+            xrange = (cell_bounding_box[2] - cell_bounding_box[0]) * pixel_size
+            yrange = (cell_bounding_box[3] - cell_bounding_box[1]) * pixel_size
+
+            l_rep = xrange
+            r_rep = (yrange + 2*r_buffer) / 2
+
+        ## generate cell length histogram
+        l_hist, l_rel_edges = np.histogram(
+            self.coords['l_rel'],
+            bins = np.linspace(0, 1, num_l_bins+1)
+        )
+
+        l_abs_edges = l_rel_edges * l_rep
+
+        l_hist_asym = l_hist / l_hist.sum()
+
+        l_hist_sym = (l_hist + l_hist[::-1]) / 2
+        l_hist_sym = l_hist_sym / l_hist_sym.sum()
+
+        # l_hist_edges = (l_hist_edges * xrange) - (xrange / 2)
+
+        l_hist_df = pd.DataFrame(
+            data = {
+                'l_rel_left': l_rel_edges[:-1],
+                'l_rel_right': l_rel_edges[1:],
+                'l_um_left': l_abs_edges[:-1],
+                'l_um_right': l_abs_edges[1:],
+                'prob_asym': l_hist_asym,
+                'prob_sym': l_hist_sym,
+            }
+        )
+
+        r_hist, r_abs_edges = np.histogram(
+            self.coords['r_abs_signed'] * pixel_size,
+            bins=np.linspace(-1, 1, num_r_bins+1) * r_rep
+            )
+        
+        r_rel_edges = np.linspace(0, 1, num_r_bins+1)
+
+        r_hist_asym = r_hist / r_hist.sum()
+        
+        r_hist_sym = r_hist + r_hist[::-1]
+        r_hist_sym = r_hist_sym / r_hist_sym.sum()
+        
+        r_hist_df = pd.DataFrame(
+            data = {
+                'r_rel_left': r_rel_edges[:-1],
+                'r_rel_right': r_rel_edges[1:],
+                'r_um_left': r_abs_edges[:-1],
+                'r_um_right': r_abs_edges[1:],
+                'prob_asym': r_hist_asym,
+                'prob_sym': r_hist_sym,
+            }
+        )
+
+        self.l_hist_df = l_hist_df
+        self.r_hist_df = r_hist_df
+
     def create_rep_grid(self, 
                         mode='binaries', 
                         grid_params=DEFAULT_GRID_PARAMS, 
@@ -172,7 +254,7 @@ class SpideyAtlas:
         # loop over rings
         for i_r in range(i_r_max + 1):
             # find i_p_max for this ring
-            pkey_ring = pkey_array[(pkey_array[:,0]==i_r)]
+            pkey_ring = pkey_array[(pkey_array[:,0] == i_r)]
             i_p_max = pkey_ring[:,2].max()
 
             # start at i_p = 0, top side of spideymap
@@ -241,6 +323,9 @@ class SpideyAtlas:
             self.coords.loc[self.coords['map_name'] == map_name, 'theta'] = map_coords['theta']
 
             self.coords.loc[self.coords['map_name'] == map_name, 'cell_length'] = map.mid.length
+
+            self.coords.loc[self.coords['map_name'] == map_name, 'l_rel'] = map_coords['l_abs'] / map_coords['cell_length']
+            self.coords.loc[self.coords['map_name'] == map_name, 'r_abs_signed'] = map_coords['r_abs'] * np.sign(np.cos(map_coords['theta'] * np.pi/180.))
 
     def sum_maps(self, map_data_col='count', atlas_data_col=None, min_length=0, max_length=np.inf):
         """

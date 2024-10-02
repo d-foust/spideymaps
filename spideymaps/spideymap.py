@@ -313,8 +313,10 @@ class Spideymap:
                                    ycol=self.ycol,
                                    delta=delta)
                                    ), 
-            axis=1
+                axis=1
             )
+        
+        self.coords['cell_length'] = self.mid.length
 
     def make_grid(self,
                   n_cols=8,
