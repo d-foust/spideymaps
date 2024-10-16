@@ -71,6 +71,8 @@ class SpideyAtlas:
     
     def add_symmetric_elements(self, col_name='count', symcol_name=None, style='quad'):
         """
+        style : str
+            'quad', 'hotdog', or 'hamburger'
         """
         if symcol_name is None:
             symcol_name = col_name + '_symsum'
@@ -78,9 +80,18 @@ class SpideyAtlas:
         if hasattr(self, 'sym_key_sets') == False:
             self.find_symmetric_sets()
 
-        for sym_set in self.sym_key_sets:
-            self.data.loc[[*sym_set], symcol_name] = self.data.loc[[*sym_set], col_name].sum()
-    
+        if style == 'quad':
+            for sym_set in self.sym_key_sets:
+                self.data.loc[[*sym_set], symcol_name] = self.data.loc[[*sym_set], col_name].sum()
+
+        elif style == 'hotdog':
+            for sym_set in self.hotdog_key_sets:
+                self.data.loc[[*sym_set], symcol_name] = self.data.loc[[*sym_set], col_name].sum()
+
+        elif style == 'hamburger':
+            for sym_set in self.hamburger_key_sets:
+                self.data.loc[[*sym_set], symcol_name] = self.data.loc[[*sym_set], col_name].sum()
+
     def align_hamburger_style(self):
         """
         Align all spideymaps in atlas hamburger style (relative to short axis)
@@ -90,16 +101,76 @@ class SpideyAtlas:
             if i_l > i_l_max:
                 i_l_max = i_l
 
-        maps = self.coords['map_name']
+        maps = self.coords['map_name'].unique()
 
         for map in maps:
             map_filt = self.coords['map_name'] == map
             left = (self.coords[map_filt]['i_l'] <= i_l_max // 2 + i_l_max % 2 - 1).sum()
             right = (self.coords[map_filt]['i_l'] > i_l_max // 2).sum()
 
-
             if left > right:
-                self.coords[map_filt]['i_l'] = i_l_max - self.coords[map_filt]['i_l']
+                self.coords.loc[map_filt, 'i_l'] = i_l_max - self.coords[map_filt]['i_l']
+
+    def align_hotdog_style(self):
+        """
+        """
+        def replace_row(row, mapping_dict):
+            row_tuple = tuple(row)  # Convert the row to a tuple
+            # out_tuple = mapping_dict.get(tuple(row), (np.nan, np.nan, np.nan))
+            # print(row, list(mapping_dict.get(row_tuple, row)))
+            return pd.Series(mapping_dict.get(row_tuple, row), index=('i_r', 'i_l', 'i_p'))
+        
+        i_r_max = 0
+        for i_r, _, _ in list(self.pkeys):
+            if i_r > i_r_max: i_r_max = i_r
+
+        i_p_max = (i_r_max + 1) * [0]
+        for i_r, i_l, i_p in list(self.pkeys):
+            if i_p > i_p_max[i_r]: i_p_max[i_r] = i_p
+
+        top_keys = [] # above midline
+        bottom_keys = [] # below midline
+
+        if hasattr(self, 'sym_key_sets') == False:
+            self.find_symmetric_sets()
+
+        key_swap_dict = {}
+        for sym_set in self.hotdog_key_sets:
+            if len(sym_set) == 2: # key has a symmetric pair
+                if sym_set[0][2] == 0:
+                    top_keys.append(sym_set[0])
+                    bottom_keys.append(sym_set[1])
+                elif sym_set[0][2] < sym_set[1][2]:
+                    top_keys.append(sym_set[0])
+                    bottom_keys.append(sym_set[1])
+                elif sym_set[0][2] > sym_set[1][2]:
+                    top_keys.append(sym_set[1])
+                    bottom_keys.append(sym_set[0])
+                key_swap_dict[sym_set[0]] = sym_set[1]
+                key_swap_dict[sym_set[1]] = sym_set[0]
+            elif len(sym_set) == 1:
+                key_swap_dict[sym_set[0]] = sym_set[0]
+
+        maps = self.coords['map_name'].unique()
+        for map in maps:
+            map_filt = (self.coords['map_name'] == map) & (~np.isnan(self.coords['i_r']))
+            map_coords = self.coords[map_filt].copy()
+            maps_coords_value_counts = map_coords.value_counts(subset=['i_r', 'i_l', 'i_p'])
+            top_sum = maps_coords_value_counts.loc[maps_coords_value_counts.index.isin(top_keys)].sum()
+            bottom_sum = maps_coords_value_counts.loc[maps_coords_value_counts.index.isin(bottom_keys)].sum()
+
+            print(bottom_sum, top_sum)
+            if bottom_sum > top_sum: # flip bottom onto top
+                map_coords_apply = map_coords.loc[:, ['i_r', 'i_l', 'i_p']].apply(
+                    lambda row: replace_row(row, key_swap_dict), 
+                    axis=1,
+                    result_type='expand',
+                    )
+                self.coords.loc[map_filt, ['i_r', 'i_l', 'i_p']] = map_coords_apply.loc[:, ['i_r', 'i_l', 'i_p']]
+                
+    def align_quad_style(self):
+        self.align_hotdog_style()
+        self.align_hamburger_style()
 
     def calculate_histograms(self, 
                              pixel_size=0.049, 
@@ -250,6 +321,8 @@ class SpideyAtlas:
 
         # returned as list
         sym_key_sets = []
+        hotdog_key_sets = []
+        hamburger_key_sets = []
 
         # loop over rings
         for i_r in range(i_r_max + 1):
@@ -259,15 +332,28 @@ class SpideyAtlas:
 
             # start at i_p = 0, top side of spideymap
             i_p = 0
-            for i_p in range(1, i_p_max//2 + 1):
+            # loop over one polar quadrant
+            for i_p in range(1, i_p_max//2 + 1): # stops at ones that have 4-fold symmetry
                 sym_key_sets.append(((i_r, 0, i_p),
                     (i_r, 0, i_p_max - (i_p - 1)),
                     (i_r, i_l_max, i_p),
                     (i_r, i_l_max, i_p_max - (i_p - 1))))
                 
+                hotdog_key_sets.append(((i_r, 0, i_p), (i_r, 0, i_p_max - (i_p - 1))))
+                hotdog_key_sets.append(((i_r, i_l_max, i_p), (i_r, i_l_max, i_p_max - (i_p - 1))))
+
+                hamburger_key_sets.append(((i_r, 0, i_p), (i_r, i_l_max, i_p)))
+                hamburger_key_sets.append(((i_r, 0, i_p_max - (i_p - 1)), (i_r, i_l_max, i_p_max - (i_p - 1))))
+                
             i_p += 1
-            if i_p_max % 2 == 1:
+            if i_p_max % 2 == 1: # i_p_max is odd -> have polar segment in ring with only two-fold symmetry (hamburger only)
                 sym_key_sets.append(((i_r, 0, i_p),
+                    (i_r, i_l_max, i_p_max - (i_p - 1))))
+                
+                hotdog_key_sets.append(((i_r, 0, i_p),)) # singlets
+                hotdog_key_sets.append(((i_r, i_l_max, i_p_max - (i_p - 1)),))
+
+                hamburger_key_sets.append(((i_r, 0, i_p),
                     (i_r, i_l_max, i_p_max - (i_p - 1))))
             
             i_l = 0
@@ -276,15 +362,34 @@ class SpideyAtlas:
                                     (i_r, i_l, -1),
                                     (i_r, i_l_max-i_l, 0),
                                     (i_r, i_l_max-i_l, -1)))
+                
+                hotdog_key_sets.append(((i_r, i_l, 0),
+                                    (i_r, i_l, -1)))
+                hotdog_key_sets.append(((i_r, i_l_max-i_l, 0),
+                                    (i_r, i_l_max-i_l, -1)))
+                
+                hamburger_key_sets.append(((i_r, i_l, 0), 
+                                           (i_r, i_l_max-i_l, 0)))
+                hamburger_key_sets.append(((i_r, i_l, -1), 
+                                           (i_r, i_l_max-i_l, -1)))
             
             i_l += 1
-            if i_l_max % 2 == 0:
+            if i_l_max % 2 == 0: # odd number of columns, two-fold symmetry for middle column (hotdog only)
                 sym_key_sets.append(((i_r, i_l, 0),
                     (i_r, i_l, -1)))
+                
+                hotdog_key_sets.append(((i_r, i_l, 0),
+                                        (i_r, i_l, -1)))
+                
+                hamburger_key_sets.append(((i_r, i_l, 0),))
+                hamburger_key_sets.append(((i_r, i_l, -1),))
+                
     
         self.sym_key_sets = sym_key_sets
+        self.hotdog_key_sets = hotdog_key_sets
+        self.hamburger_key_sets = hamburger_key_sets
 
-        return self.sym_key_sets   
+        # return self.sym_key_sets  
 
     def get_cell_lengths(self):
         """
