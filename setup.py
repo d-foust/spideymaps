@@ -6,7 +6,7 @@ with open("readme.md", "r") as f:
 
 setuptools.setup(
     name='spideymaps',
-    version='0.1.0',
+    version='0.1.2',
     author='Daniel Foust',
     author_email='djfoust@umich.edu',
     description='For generating heat maps of single-molecule localization data in rod-shaped bacteria.',
@@ -14,13 +14,13 @@ setuptools.setup(
     long_description_content_type='text/markdown',
     packages=setuptools.find_packages(),
     install_requires=[
-        'h5py',
+        'h5py>=3.0.0',
         'matplotlib',
         'numpy',
         'pandas',
         'scipy',
         'seaborn',
-        'shapely',
+        'shapely>=2.0.0',
         'scikit-image',
     ],
     classifiers=[
