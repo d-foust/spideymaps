@@ -1,6 +1,7 @@
 # Spideymaps
 A tool for identifying patterns in single-particle experiments in rod-shaped bacteria.  
-![example_maps](img/spideymaps%20D_av%20example.png)
+
+<img src="img/spideymaps%20D_av%20example.png" alt="example maps" style="width: 75%; height: auto; display: block; margin: 0 auto;">
 
 ## Installation
 `pip install spideymaps`
